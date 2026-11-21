@@ -54,12 +54,10 @@ final class Scenic {
 
     private static final String TAG = "TvHome";
     private static final String[] SCENES = {"night", "golden", "water", "fog", "dawn"};
-    private static final int SCENE_MS = 20_000;
     private static final int CROSS_MS = 1600;
     private static final int FADE_MS = 800;
     private static final int SLIDE_MS = 760;
     private static final int PARK_MS = 840;
-    private static final int ART_MS = 45_000;
 
     private final Activity activity;
     private final FrameLayout root;
@@ -80,7 +78,6 @@ final class Scenic {
     private boolean oneClip;
     /** Aerials failed during this idle, so All stays on stills until the next time. */
     private boolean aerialsGaveUp;
-    private final int seconds;
     private final PathInterpolator slide = new PathInterpolator(0.16f, 1f, 0.3f, 1f);
 
     private ImageView photoA, photoB, fgA, fgB, artA, artB;
@@ -88,6 +85,9 @@ final class Scenic {
     private TextView date, keep;
     private View scrim, topButtons;
     private TextureView aerialView;
+    private TextView aerialLabel;
+    private int videoWidth;
+    private int videoHeight;
     private View[] fadeViews;
     private View[] topViews;
     private View[] bottomViews;
@@ -129,7 +129,6 @@ final class Scenic {
         this.glass = glass;
         this.allow = allow;
         this.show = Config.screensaverMode(activity);
-        this.seconds = Config.idleSeconds(activity);
     }
 
     private void build() {
@@ -171,7 +170,9 @@ final class Scenic {
                 surface = new Surface(surfaceTexture);
                 if (pendingClip >= 0) playClip(pendingClip);
             }
-            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) { }
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) {
+                cropAerial();
+            }
             @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
                 surface = null;
                 return true;
@@ -189,6 +190,17 @@ final class Scenic {
         add(artA, at++);
         add(artB, at++);
         add(aerialView, at, match());
+        aerialLabel = new TextView(activity);
+        aerialLabel.setTextColor(0xE6FFFFFF);
+        aerialLabel.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 22);
+        aerialLabel.setShadowLayer(8, 0, 2, 0x99000000);
+        aerialLabel.setAlpha(0f);
+        FrameLayout.LayoutParams labelLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.START | Gravity.BOTTOM);
+        int labelPad = Math.round(48 * density());
+        labelLp.setMargins(labelPad, labelPad, labelPad, labelPad);
+        root.addView(aerialLabel, at + 1, labelLp);
 
         date = new TextView(activity);
         date.setTextColor(0xF2FFFFFF);
@@ -219,7 +231,7 @@ final class Scenic {
         artB.setAlpha(0f);
         tickClock();
         showScene(0, false);
-        main.postDelayed(this::advanceScene, SCENE_MS);
+        scheduleScene();
         artFiles = slidesFor(show);
     }
 
@@ -228,6 +240,7 @@ final class Scenic {
         show = Config.screensaverMode(activity);
         tickClock();
         restartTimer();
+        scheduleScene();
     }
 
     void pause() {
@@ -264,8 +277,22 @@ final class Scenic {
 
     private void restartTimer() {
         main.removeCallbacks(idleTask);
-        if (!resumed || seconds <= 0 || "off".equals(show)) return;
-        main.postDelayed(idleTask, seconds * 1000L);
+        show = Config.screensaverMode(activity);
+        int wait = Config.idleSeconds(activity);
+        if (!resumed || wait <= 0 || "off".equals(show)) return;
+        main.postDelayed(idleTask, wait * 1000L);
+    }
+
+    private void scheduleScene() {
+        main.removeCallbacks(this::advanceScene);
+        int wait = Config.sceneSeconds(activity);
+        if (wait > 0) main.postDelayed(this::advanceScene, wait * 1000L);
+    }
+
+    private void schedulePictures() {
+        main.removeCallbacks(advanceArt);
+        int wait = Config.pictureSeconds(activity);
+        if (wait > 0) main.postDelayed(advanceArt, wait * 1000L);
     }
 
     boolean isIdle() {
@@ -370,8 +397,10 @@ final class Scenic {
 
     private void advanceScene() {
         if (activity.isDestroyed()) return;
+        int wait = Config.sceneSeconds(activity);
+        if (wait <= 0) return;
         showScene((scene + 1) % SCENES.length, true);
-        main.postDelayed(this::advanceScene, SCENE_MS);
+        main.postDelayed(this::advanceScene, wait * 1000L);
     }
 
     private void showScene(int index, boolean fade) {
@@ -440,7 +469,7 @@ final class Scenic {
         artFront = false;
         aerialTurn = "all".equals(show);
         crossArt(true);
-        main.postDelayed(advanceArt, ART_MS);
+        schedulePictures();
     }
 
     private final Runnable advanceArt = new Runnable() {
@@ -457,7 +486,7 @@ final class Scenic {
             if (artFiles.isEmpty()) return;
             artIndex = (artIndex + 1) % artFiles.size();
             crossArt(true);
-            main.postDelayed(this, ART_MS);
+            schedulePictures();
         }
     };
 
@@ -589,8 +618,15 @@ final class Scenic {
                 player.setOnInfoListener((mp, what, extra) -> {
                     if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START && idle) {
                         aerialView.animate().alpha(1f).setDuration(FADE_MS).start();
+                        aerialLabel.setText(clips.get(clip).label);
+                        aerialLabel.animate().alpha(1f).setDuration(FADE_MS).start();
                     }
                     return false;
+                });
+                player.setOnVideoSizeChangedListener((mp, width, height) -> {
+                    videoWidth = width;
+                    videoHeight = height;
+                    aerialView.post(this::cropAerial);
                 });
                 player.setOnCompletionListener(mp -> main.post(() -> {
                     if (!idle) return;
@@ -633,6 +669,8 @@ final class Scenic {
         }
         aerialView.animate().cancel();
         aerialView.animate().alpha(0f).setDuration(FADE_MS).start();
+        aerialLabel.animate().cancel();
+        aerialLabel.animate().alpha(0f).setDuration(FADE_MS).start();
         if (!idle || !"all".equals(show)) return;
         artFiles = slidesFor(show);
         if (!artFiles.isEmpty()) {
@@ -640,7 +678,24 @@ final class Scenic {
             crossArt(false);
         }
         aerialTurn = !aerialsGaveUp;
-        main.postDelayed(advanceArt, ART_MS);
+        schedulePictures();
+    }
+
+    /** Fill the screen the way Apple TV does, cropping the extra instead of letterboxing. */
+    private void cropAerial() {
+        if (aerialView == null || videoWidth == 0 || videoHeight == 0) return;
+        int viewW = aerialView.getWidth();
+        int viewH = aerialView.getHeight();
+        if (viewW == 0 || viewH == 0) return;
+        float viewAspect = viewW / (float) viewH;
+        float videoAspect = videoWidth / (float) videoHeight;
+        float scaleX = 1f;
+        float scaleY = 1f;
+        if (videoAspect > viewAspect) scaleX = videoAspect / viewAspect;
+        else scaleY = viewAspect / videoAspect;
+        Matrix matrix = new Matrix();
+        matrix.setScale(scaleX, scaleY, viewW / 2f, viewH / 2f);
+        aerialView.setTransform(matrix);
     }
 
     private void stopAerial() {
@@ -650,6 +705,10 @@ final class Scenic {
         }
         aerialView.animate().cancel();
         aerialView.setAlpha(0f);
+        if (aerialLabel != null) {
+            aerialLabel.animate().cancel();
+            aerialLabel.setAlpha(0f);
+        }
     }
 
     private Bitmap decode(String path, boolean alpha, int maxEdge) {

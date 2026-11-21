@@ -8,7 +8,7 @@ this file repeats their rules in the form an agent needs, and links to them for 
 
 | You were asked to | Do this |
 |---|---|
-| Install this living-room home on a TV | Read [docs/install.md](docs/install.md) and follow it. Do not follow [PROMPT.md](PROMPT.md). This tree is not the stock CleanYourTV cleaner: the launcher has the scenic home, it uses the network, and debugging stays on unless the person asks you to turn it off. |
+| Install this living-room home on a TV | Read [docs/install.md](docs/install.md) and follow it. The person does not clone this project. You already have it, and you install it on their TV. Do not follow [PROMPT.md](PROMPT.md). This tree is not the stock CleanYourTV cleaner: the launcher has the scenic home, it uses the network, and debugging stays on unless the person asks you to turn it off. |
 | Clean up a TV the CleanYourTV way: debloat it, then a plain launcher | Read [PROMPT.md](PROMPT.md) and follow it exactly, on the real TV. Use the tools in `tools/` and the launcher in `launcher/` rather than writing new ones; the only file you need to change is `launcher/app/src/main/res/values/config.xml`, or a theme's `config.json`, for this TV. Do not edit the repo's docs, tests or other code, and do not open issues or pull requests unless the person asks you to. |
 | Change this repo: a TV list, a fix, a translation, a theme, docs | Skip the next section and read on from [Repo map](#repo-map). |
 

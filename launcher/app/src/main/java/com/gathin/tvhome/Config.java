@@ -389,6 +389,9 @@ final class Config {
 
     static final String SCREENSAVER_PREFS = "screensaver";
     static final String SCREENSAVER_MODE = "mode";
+    static final String IDLE_SECONDS = "idle_seconds";
+    static final String SCENE_SECONDS = "scene_seconds";
+    static final String PICTURE_SECONDS = "picture_seconds";
 
     /**
      * What the idle screen plays. A choice in Screensaver wins. Otherwise the theme's idle_show,
@@ -456,11 +459,30 @@ final class Config {
         }
     }
 
-    /** Theme key idle_seconds: how long the home waits before the screensaver. */
+    /** How long the home waits before the screensaver. The Screensaver app wins over the theme. */
     static int idleSeconds(Context ctx) {
-        JSONObject json = theme(ctx);
-        int seconds = json == null ? 0 : json.optInt("idle_seconds", 0);
+        return timed(ctx, IDLE_SECONDS, "idle_seconds", 60);
+    }
+
+    /** How often the home's landscape changes. 0 holds the current scene. */
+    static int sceneSeconds(Context ctx) {
+        return timed(ctx, SCENE_SECONDS, "scene_seconds", 20);
+    }
+
+    /** How often a painting or photo changes during the screensaver. 0 holds the current picture. */
+    static int pictureSeconds(Context ctx) {
+        return timed(ctx, PICTURE_SECONDS, "picture_seconds", 45);
+    }
+
+    private static int timed(Context ctx, String pref, String themeKey, int fallback) {
+        SharedPreferences prefs = ctx.getSharedPreferences(SCREENSAVER_PREFS, Context.MODE_PRIVATE);
+        int seconds = prefs.contains(pref) ? prefs.getInt(pref, fallback) : themeSeconds(ctx, themeKey, fallback);
         return Math.max(0, Math.min(seconds, 3600));
+    }
+
+    private static int themeSeconds(Context ctx, String key, int fallback) {
+        JSONObject json = theme(ctx);
+        return json == null || !json.has(key) ? fallback : json.optInt(key, fallback);
     }
 
     private static JSONObject themeCached;

@@ -81,6 +81,8 @@ The idle paintings are National Gallery of Art open-access images at the gallery
 Credits are in `launcher/app/src/main/assets/art/CREDITS.md`. The five backgrounds are the
 Couch TV night scenes, used at 1920x1080. Their note is in the scenic home guide.
 
-Open More apps and choose Screensaver. Art, Aerials, Photos, or All. Photos and All show a
-QR code: leave that screen open, scan it with a phone, and send jpeg, png, or webp pictures.
-They stay on the TV. Closing the screen turns the page off.
+Open More apps and choose Screensaver. Art, Aerials, Photos, or All. Aerials are Apple's TV
+aerials, the landscape films, full screen, one place after another. The same screen sets how
+long the home waits, how often the landscape changes, and how often a painting or photo
+changes. Photos and All show a QR code: leave that screen open, scan it with a phone, and
+send jpeg, png, or webp pictures. They stay on the TV. Closing the screen turns the page off.

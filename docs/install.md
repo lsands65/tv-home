@@ -1,14 +1,16 @@
-# Install this home on another TV
+# Install this home on someone's TV
 
-This is the procedure for putting **this** launcher on someone else's Android TV or Google TV.
-It is the living-room home in this repo: scenic clock, packed dock, Keep watching, More apps,
-and the Screensaver app. A stock [CleanYourTV](https://github.com/Gathin23/cleanyourtv) APK
-does not have it. Do not follow [PROMPT.md](../PROMPT.md) for this job. That prompt debloats a
-TV and then tells you to turn debugging off. This install does not debloat, and it leaves
-debugging on unless the person asks you to turn it off.
+You already have this project. The person has a TV. They do not clone anything, and they do
+not build anything. You connect to the set and install this home for them: scenic clock,
+packed dock, Keep watching, More apps, and the Screensaver app.
 
-Read [scenic-home.md](scenic-home.md) for how the screen behaves. This file is only how to get
-that screen onto a set you have not seen before.
+A stock [CleanYourTV](https://github.com/Gathin23/cleanyourtv) APK does not have it. Do not
+follow [PROMPT.md](../PROMPT.md). That prompt debloats a TV and then tells you to turn
+debugging off. This install does not debloat, and it leaves debugging on unless the person
+asks you to turn it off.
+
+Read [scenic-home.md](scenic-home.md) for how the screen behaves. This file is only how you
+get that screen onto a set you have not seen before.
 
 Do not commit a TV's IP, Wi-Fi name, XMLTV address, or a GitHub token. Do not push to
 `Gathin23/cleanyourtv`.
@@ -24,9 +26,9 @@ Ask the person, once:
 - That this set may become the default Home. Do not disable the stock launcher until this one
   is installed and you have seen it focused.
 
-You need JDK 17 (Gradle 8.9 does not build on JDK 25) and the Android SDK in `ANDROID_HOME`.
-The TV must be on the same network, awake, and on Android 8 or newer (`ro.build.version.sdk`
-at least 26).
+You build it. JDK 17 (Gradle 8.9 does not build on JDK 25) and the Android SDK in
+`ANDROID_HOME` are on your machine, not theirs. The TV must be on the same network, awake,
+and on Android 8 or newer (`ro.build.version.sdk` at least 26).
 
 ## 1. Connect
 
@@ -129,9 +131,15 @@ Then check the pieces that are easy to miss:
 - OK on the last dock icon opens More apps. The first icon is Screensaver, a clock tile.
   The focus ring is on the icon, with a gap, not around the name. OK launches the app.
   Back closes the folder and does not open an app.
-- Screensaver offers Art, Aerials, Photos, and All. Photos and All show a QR code while that
-  screen stays open. A phone on the same network can send jpeg, png, or webp. Closing the
-  screen stops the page. Do not commit the photos.
+- Screensaver offers Art, Aerials, Photos, and All. Aerials are Apple's TV aerials: the
+  published landscape films, full screen, one place after another, with the place name in the
+  corner. Each film plays through. Photos and All show a QR code while that screen stays open.
+  A phone on the same network can send jpeg, png, or webp. Closing the screen stops the page.
+  Do not commit the photos.
+- The same screen sets how long the home waits, how often the landscape behind the clock
+  changes, and how often a painting or photo changes. Left and right move a time. Aerials
+  ignore the picture time, because each film plays to the end. Defaults are 1 minute, 20
+  seconds, and 45 seconds until someone changes them.
 - Back twice within two seconds, with nothing else open, fills the screen with a painting.
   The next key wakes the home and does not open an app.
 - Up from the dock enters Keep watching. Up again does nothing.
@@ -142,7 +150,7 @@ Then check the pieces that are easy to miss:
 
 - Do not install Couch TV, and do not put this UI in a WebView. The scene is drawn by `Scenic`.
 - Do not turn certificate checks off, and do not copy Apple's aerial videos into the app.
-  Aerials are streamed.
+  Aerials are Apple's published 1080p films, streamed.
 - Do not vendor new paintings under 4096px on the long edge. The ones in
   `launcher/app/src/main/assets/art/` are the set.
 - Updates, if the person wants them, read GitHub releases of `lsands65/tv-home`. The tag is

@@ -126,9 +126,16 @@ open-access images, fetched at the gallery's 4096px cap and cropped to fill the 
 `launcher/app/src/main/assets/art/CREDITS.md`. 1080px crops are too soft on this panel; do not
 swap in the Couch TV art pack or the Art Institute's public 1686px cap.
 
-More apps has Screensaver. It chooses Art, Aerials, Photos, or All. Art is the paintings.
-Aerials are the Apple streams. Photos are pictures from a phone. All takes turns: a painting or
-a photo, then one aerial, then another still.
+More apps has Screensaver. It chooses Art, Aerials, Photos, or All, and it sets the wait
+before the idle screen, how often the home landscape changes, and how often a painting or
+photo changes. Those choices stay on the TV and win over the theme. Defaults are 1 minute,
+20 seconds, and 45 seconds. Hold keeps the current landscape or picture. Never means the home
+does not idle on its own. Double Back still starts it.
+
+Art is the paintings. Aerials are Apple's TV aerials: the published 1080p landscape films,
+full screen, with the place name in the corner. Each one plays through, then the next.
+Photos are pictures from a phone. All takes turns: a painting or a photo, then one of those
+films, then another still. Aerials mode does not use the picture timer.
 
 Photos and All show a QR code. Leave that screen open, scan it, and the phone page can send
 jpeg, png, or webp files. They stay on the TV. Closing the screen stops the page. The address
