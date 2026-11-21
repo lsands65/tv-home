@@ -1,5 +1,9 @@
 # Living room
 
+<p align="center">
+  <img src="docs/previews/home.png" alt="The living-room home. A glass clock sits over a mountain lake, Keep watching shows three Jellyfin titles, and the dock is a short row of app icons." width="960">
+</p>
+
 A home screen for the living-room TV. A landscape fills the screen, a frosted clock sits in the
 sky, and the dock is a short row of the apps' own icons. Keep watching shows the episode and how
 far through it you are. After a quiet minute, or two presses of Back, a painting takes over.
@@ -23,8 +27,16 @@ The dock wraps its icons. It stays narrow when there are only a few, and it will
 about 680dp. Settings is an icon on the dock. The last icon opens More apps, which launches
 anything that is not already on the dock. OK in that folder opens the app.
 
+<p align="center">
+  <img src="docs/previews/more-apps.png" alt="The More apps folder open over the home screen, with File Manager, Media Center, Play Store, and Screen Casting." width="960">
+</p>
+
 Pressing Back twice within two seconds starts the screensaver. One press does nothing. The first
 key after that brings the clock and the dock back, and does not open an app.
+
+<p align="center">
+  <img src="docs/previews/screensaver.png" alt="The screensaver. Jasper Francis Cropsey's Autumn on the Hudson River fills the screen." width="960">
+</p>
 
 ## Build and install
 
