@@ -138,7 +138,8 @@ Photos are pictures from a phone. All takes turns: a painting or a photo, then o
 films, then another still. Aerials mode does not use the picture timer.
 
 Photos and All show a QR code. Leave that screen open, scan it, and the phone page can send
-jpeg, png, or webp files. They stay on the TV. Closing the screen stops the page. The address
+jpeg, png, or webp files. They stay on the TV, and the pictures themselves show on that screen
+as they arrive. Closing the screen stops the page. The address
 has a new token each time, so an old scan does not keep working. Remove photos is on that screen.
 
 A theme can still drop the same files in `themes/living-room/screensaver/` and push them. That

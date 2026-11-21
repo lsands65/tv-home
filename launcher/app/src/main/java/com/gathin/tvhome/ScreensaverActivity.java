@@ -3,12 +3,18 @@ package com.gathin.tvhome;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Outline;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewOutlineProvider;
+import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -17,6 +23,13 @@ import com.google.zxing.BarcodeFormat;
 import com.google.zxing.qrcode.QRCodeWriter;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /** Picks what the idle screen plays, and lets a phone add photos while this screen is open. */
 public final class ScreensaverActivity extends Activity implements PhotoServer.Ready {
@@ -26,6 +39,10 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
     private static final int[] PICTURE_CHOICES = {15, 30, 45, 60, 120, 300};
     private static final String[] TIMING_KEYS = {
             Config.IDLE_SECONDS, Config.SCENE_SECONDS, Config.PICTURE_SECONDS};
+    /** Every row on this screen, so the mode buttons and the times line up. */
+    private static final int ROW_WIDTH = 420;
+    private static final int ROW_HEIGHT = 46;
+    private static final int TILE = 176;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final TextView[] chips = new TextView[MODES.length];
@@ -38,8 +55,17 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
     private TextView address;
     private ImageView qr;
     private LinearLayout phone;
+    private HorizontalScrollView strip;
+    private LinearLayout tiles;
     private PhotoServer server;
     private String url = "";
+    private String shown = "";
+    private int generation;
+    private final ExecutorService decode = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "screensaver-photos");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     private final Runnable recount = new Runnable() {
         @Override public void run() {
@@ -54,7 +80,7 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
         getWindow().getDecorView().setBackgroundColor(0xFF101419);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.HORIZONTAL);
-        root.setPadding(dp(64), dp(32), dp(64), dp(28));
+        root.setPadding(dp(64), dp(24), dp(64), dp(20));
 
         LinearLayout left = new LinearLayout(this);
         left.setOrientation(LinearLayout.VERTICAL);
@@ -68,7 +94,7 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
         help.setTextColor(0xD9FFFFFF);
         help.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18);
         LinearLayout.LayoutParams helpLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                dp(ROW_WIDTH), LinearLayout.LayoutParams.WRAP_CONTENT);
         helpLp.topMargin = dp(8);
         helpLp.bottomMargin = dp(4);
         left.addView(help, helpLp);
@@ -79,9 +105,7 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
             final String mode = MODES[i];
             TextView chip = chip(getString(labels[i]));
             chip.setOnClickListener(v -> choose(mode));
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(280), LinearLayout.LayoutParams.WRAP_CONTENT);
-            lp.topMargin = dp(8);
-            left.addView(chip, lp);
+            left.addView(chip, rowParams());
             chips[i] = chip;
         }
 
@@ -99,24 +123,20 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
 
         remove = chip(getString(R.string.screensaver_remove));
         remove.setOnClickListener(v -> confirmRemove());
-        LinearLayout.LayoutParams removeLp = new LinearLayout.LayoutParams(dp(280), LinearLayout.LayoutParams.WRAP_CONTENT);
-        removeLp.topMargin = dp(10);
-        left.addView(remove, removeLp);
 
         android.widget.ScrollView scroll = new android.widget.ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setVerticalScrollBarEnabled(false);
         scroll.addView(left, new android.widget.FrameLayout.LayoutParams(
-                android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
-                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT));
-        root.addView(scroll, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f));
+                dp(ROW_WIDTH), android.widget.FrameLayout.LayoutParams.WRAP_CONTENT));
+        root.addView(scroll, new LinearLayout.LayoutParams(dp(ROW_WIDTH), LinearLayout.LayoutParams.MATCH_PARENT));
 
         phone = new LinearLayout(this);
         phone.setOrientation(LinearLayout.VERTICAL);
         phone.setGravity(Gravity.CENTER_HORIZONTAL);
         qr = new ImageView(this);
         qr.setBackgroundColor(Color.WHITE);
-        int size = dp(280);
+        int size = dp(200);
         phone.addView(qr, new LinearLayout.LayoutParams(size, size));
         TextView scan = new TextView(this);
         scan.setText(R.string.screensaver_scan);
@@ -133,10 +153,32 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
         LinearLayout.LayoutParams addressLp = new LinearLayout.LayoutParams(dp(360), LinearLayout.LayoutParams.WRAP_CONTENT);
         addressLp.topMargin = dp(8);
         phone.addView(address, addressLp);
-        LinearLayout.LayoutParams phoneLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        phoneLp.gravity = Gravity.CENTER_VERTICAL;
-        root.addView(phone, phoneLp);
+        LinearLayout side = new LinearLayout(this);
+        side.setOrientation(LinearLayout.VERTICAL);
+        side.setGravity(Gravity.CENTER);
+        phone.setGravity(Gravity.CENTER_HORIZONTAL);
+        side.addView(phone, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        strip = new HorizontalScrollView(this);
+        strip.setHorizontalScrollBarEnabled(false);
+        strip.setFillViewport(true);
+        strip.setVisibility(View.GONE);
+        tiles = new LinearLayout(this);
+        tiles.setOrientation(LinearLayout.HORIZONTAL);
+        tiles.setGravity(Gravity.CENTER);
+        strip.addView(tiles, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        LinearLayout.LayoutParams stripLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f);
+        stripLp.topMargin = dp(16);
+        side.addView(strip, stripLp);
+        LinearLayout.LayoutParams removeLp = new LinearLayout.LayoutParams(dp(220), dp(ROW_HEIGHT));
+        removeLp.topMargin = dp(12);
+        removeLp.bottomMargin = dp(8);
+        side.addView(remove, removeLp);
+        LinearLayout.LayoutParams sideLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f);
+        sideLp.setMarginStart(dp(28));
+        root.addView(side, sideLp);
 
         setContentView(root);
         paint();
@@ -155,6 +197,13 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
         main.removeCallbacks(recount);
         closePhone();
         super.onStop();
+    }
+
+    @Override
+    protected void onDestroy() {
+        generation++;
+        decode.shutdownNow();
+        super.onDestroy();
     }
 
     @Override
@@ -238,9 +287,7 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
         value.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18);
         value.setGravity(Gravity.END);
         row.addView(value);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(420), LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(8);
-        left.addView(row, lp);
+        left.addView(row, rowParams());
         timings[index] = row;
         timingNames[index] = name;
         timingValues[index] = value;
@@ -273,9 +320,142 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
     }
 
     private void showCount() {
-        int photos = Config.screensaverPhotoCount(this);
-        count.setText(getResources().getQuantityString(R.plurals.screensaver_photo_count, photos, photos));
-        remove.setVisibility(photos > 0 ? View.VISIBLE : View.GONE);
+        List<File> photos = photoFiles();
+        int count = photos.size();
+        this.count.setText(getResources().getQuantityString(R.plurals.screensaver_photo_count, count, count));
+        remove.setVisibility(count > 0 ? View.VISIBLE : View.GONE);
+        showPhotos(photos);
+    }
+
+    /** The pictures already on the TV, so a person can see what the phone sent. */
+    private void showPhotos(List<File> photos) {
+        String key = signature(photos);
+        strip.setVisibility(photos.isEmpty() ? View.GONE : View.VISIBLE);
+        if (key.equals(shown)) return;
+        shown = key;
+        int ticket = ++generation;
+        tiles.removeAllViews();
+        if (photos.isEmpty()) return;
+        decode.execute(() -> {
+            List<Bitmap> bitmaps = new ArrayList<>();
+            for (File photo : photos) bitmaps.add(thumb(photo));
+            main.post(() -> {
+                if (ticket != generation || isDestroyed()) {
+                    for (Bitmap bitmap : bitmaps) if (bitmap != null) bitmap.recycle();
+                    return;
+                }
+                tiles.removeAllViews();
+                int shown = 0;
+                for (Bitmap bitmap : bitmaps) {
+                    if (bitmap == null) continue;
+                    LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(TILE), dp(TILE));
+                    if (shown > 0) lp.setMarginStart(dp(12));
+                    tiles.addView(tile(bitmap), lp);
+                    shown++;
+                }
+            });
+        });
+    }
+
+    private List<File> photoFiles() {
+        File folder = Config.screensaverDir(this);
+        File[] files = folder == null ? null : folder.listFiles();
+        List<File> photos = new ArrayList<>();
+        if (files == null) return photos;
+        Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        for (File photo : files) {
+            if (photo.isFile() && photo.length() >= 32 && photo.length() <= 40L * 1024 * 1024
+                    && ThemeFiles.screensaverImage(photo.getName())) photos.add(photo);
+        }
+        return photos;
+    }
+
+    private static String signature(List<File> photos) {
+        StringBuilder key = new StringBuilder();
+        for (File photo : photos) {
+            key.append(photo.getName()).append(':').append(photo.length()).append(':')
+                    .append(photo.lastModified()).append(';');
+        }
+        return key.toString();
+    }
+
+    private FrameLayout tile(Bitmap bitmap) {
+        FrameLayout well = new FrameLayout(this);
+        well.setPadding(dp(5), dp(5), dp(5), dp(5));
+        well.setFocusable(true);
+        well.setOnFocusChangeListener((v, focused) -> {
+            android.graphics.drawable.GradientDrawable plate = new android.graphics.drawable.GradientDrawable();
+            plate.setCornerRadius(dp(18));
+            plate.setColor(Color.TRANSPARENT);
+            if (focused) plate.setStroke(dp(2), Color.WHITE);
+            well.setBackground(plate);
+        });
+        ImageView image = new ImageView(this);
+        image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        image.setImageBitmap(bitmap);
+        image.setClipToOutline(true);
+        image.setOutlineProvider(new ViewOutlineProvider() {
+            @Override
+            public void getOutline(View view, Outline outline) {
+                outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), dp(14));
+            }
+        });
+        well.addView(image, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        return well;
+    }
+
+    private Bitmap thumb(File file) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inPreferredConfig = Bitmap.Config.RGB_565;
+            int longEdge = Math.max(bounds.outWidth, bounds.outHeight);
+            int maxEdge = dp(TILE) * 2;
+            options.inSampleSize = 1;
+            while (options.inSampleSize * 2L * maxEdge < longEdge) options.inSampleSize *= 2;
+            Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+            return bitmap == null ? null : upright(bitmap, file);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Bitmap upright(Bitmap bitmap, File file) {
+        int orientation;
+        try (InputStream in = new FileInputStream(file)) {
+            orientation = new android.media.ExifInterface(in).getAttributeInt(
+                    android.media.ExifInterface.TAG_ORIENTATION,
+                    android.media.ExifInterface.ORIENTATION_NORMAL);
+        } catch (Exception e) {
+            return bitmap;
+        }
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case android.media.ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.postRotate(90);
+                break;
+            case android.media.ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.postRotate(180);
+                break;
+            case android.media.ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.postRotate(270);
+                break;
+            case android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.preScale(-1f, 1f);
+                break;
+            case android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.preScale(1f, -1f);
+                break;
+            default:
+                return bitmap;
+        }
+        Bitmap turned = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        if (turned != bitmap) bitmap.recycle();
+        return turned;
     }
 
     private boolean wantsPhone() {
@@ -360,6 +540,12 @@ public final class ScreensaverActivity extends Activity implements PhotoServer.R
     private int index(String mode) {
         for (int i = 0; i < MODES.length; i++) if (MODES[i].equals(mode)) return i;
         return 0;
+    }
+
+    private LinearLayout.LayoutParams rowParams() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(ROW_WIDTH), dp(ROW_HEIGHT));
+        lp.topMargin = dp(6);
+        return lp;
     }
 
     private int dp(int value) {
