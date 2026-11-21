@@ -54,9 +54,12 @@ function Drop($name) { "rm -f $dir/$name 2>/dev/null; content delete --uri $uri/
 # pictures is read back from it, so a reset that left the pictures behind still shows the theme it just removed.
 # Both paths use this one string (the same one theme.sh has).
 $clearWallpapers = "mkdir -p $dir/wallpapers 2>/dev/null; rm -f $dir/wallpapers/*.jpg $dir/wallpapers/*.jpeg $dir/wallpapers/*.png $dir/wallpapers/*.webp $dir/wallpapers/*.JPG $dir/wallpapers/*.JPEG $dir/wallpapers/*.PNG $dir/wallpapers/*.WEBP 2>/dev/null; content delete --uri $uri/wallpapers 2>/dev/null"
+# Photos for the scenic screensaver. A theme that has the folder replaces whatever is on the TV.
+# A theme without the folder leaves the TV's photos alone. -Reset clears them, back to the paintings.
+$clearScreensaver = "mkdir -p $dir/screensaver 2>/dev/null; rm -f $dir/screensaver/* 2>/dev/null; content delete --uri $uri/screensaver 2>/dev/null"
 
 if ($Reset) {
-    & $py -I tv.py "mkdir -p $dir 2>/dev/null; $(Drop 'config.json'); $(Drop 'wallpaper.jpg'); $(Drop 'wallpapers/captions.txt'); $clearWallpapers; printf '%s' '$revision' > $tmp-theme_revision; $(Put 'theme_revision'); $restart; echo reset"
+    & $py -I tv.py "mkdir -p $dir 2>/dev/null; $(Drop 'config.json'); $(Drop 'wallpaper.jpg'); $(Drop 'wallpapers/captions.txt'); $clearWallpapers; $clearScreensaver; printf '%s' '$revision' > $tmp-theme_revision; $(Put 'theme_revision'); $restart; echo reset"
     exit 0
 }
 if (-not $Theme) { throw 'usage: theme.ps1 <theme folder> | -Reset' }
@@ -85,6 +88,19 @@ if (Test-Path $captions -PathType Leaf) {
     & $py -I tv.py (Put 'wallpapers/captions.txt') | Out-Null
 } else {
     & $py -I tv.py (Drop 'wallpapers/captions.txt') | Out-Null
+}
+# Own screensaver photos. Absent folder: leave the TV alone. Present folder, even empty: replace the set.
+$photos = Join-Path $Theme 'screensaver'
+if (Test-Path $photos -PathType Container) {
+    & $py -I tv.py $clearScreensaver | Out-Null
+    Get-ChildItem $photos -File | Where-Object { $_.Extension -match '^\.(jpg|jpeg|png|webp)$' } | ForEach-Object {
+        if ($_.Name -notmatch '^[A-Za-z0-9 _().+-]+\.(jpg|jpeg|png|webp)$') { throw "unsupported screensaver filename: $($_.Name)" }
+        $stage = "$tmp-screensaver-$($_.Name -replace '[^A-Za-z0-9._-]', '-')"
+        & $py -I tv.py --push $_.FullName $stage | Out-Null
+        $encoded = [Uri]::EscapeDataString($_.Name)
+        $quoted = $dir + "/screensaver/" + $_.Name.Replace("'", "")
+        & $py -I tv.py "rm -f '$quoted' 2>/dev/null; { o=`$(content write --uri $uri/screensaver/$encoded < $stage 2>&1) && case `"`$o`" in *'Unsupported operation'*) false ;; esac; } || cp $stage '$quoted' 2>/dev/null; rm -f $stage" | Out-Null
+    }
 }
 & $py -I tv.py "printf '%s' '$revision' > $tmp-theme_revision; $(Put 'theme_revision')" | Out-Null
 & $py -I tv.py "$restart; echo applied"

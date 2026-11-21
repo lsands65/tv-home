@@ -42,10 +42,21 @@ public class ThemeFilesTest {
         assertNull(ThemeFiles.path(Arrays.asList("wallpapers", ".jpg")));
         assertNull(ThemeFiles.path(Arrays.asList("other", "dusk.jpg")));
         assertNull(ThemeFiles.path(Arrays.asList("wallpapers", "sub", "dusk.jpg")));
+        assertNull(ThemeFiles.path(Arrays.asList("screensaver", "..")));
+        assertNull(ThemeFiles.path(Arrays.asList("screensaver", "../photo.jpg")));
+    }
+
+    @Test public void screensaverPhotosAreAllowed() {
+        assertEquals("screensaver/lake.jpg", ThemeFiles.path(Arrays.asList("screensaver", "lake.jpg")));
+        assertEquals("screensaver/Family (1).jpg", ThemeFiles.path(Arrays.asList("screensaver", "Family (1).jpg")));
+        assertNull(ThemeFiles.path(Arrays.asList("screensaver", "notes.txt")));
+        assertTrue(ThemeFiles.screensaverImage("Family (1).jpg"));
+        assertFalse(ThemeFiles.screensaverImage("..photo.jpg"));
     }
 
     @Test public void onlyTheBareFolderIsTheCollection() {
         assertTrue(ThemeFiles.isCollection(Collections.singletonList("wallpapers")));
+        assertTrue(ThemeFiles.isCollection(Collections.singletonList("screensaver")));
         assertFalse(ThemeFiles.isCollection(Arrays.asList("wallpapers", "dusk.jpg")));
         assertFalse(ThemeFiles.isCollection(Collections.singletonList("config.json")));
     }

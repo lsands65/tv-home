@@ -9,6 +9,8 @@ launcher/local.properties
 backup/
 # session screenshots and working notes (may show the Wi-Fi name or account avatar) stay local
 shots/
+# Photos dropped in a theme's screensaver folder are that house's pictures
+themes/*/screensaver/
 work/
 # Perfetto traces from tools/trace.py: large, and they hold the TV's process list
 traces/

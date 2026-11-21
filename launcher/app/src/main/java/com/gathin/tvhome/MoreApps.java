@@ -6,8 +6,12 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Outline;
+import android.graphics.Paint;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -91,7 +95,7 @@ final class MoreApps {
         grid.setClipChildren(false);
         grid.setOverScrollMode(View.OVER_SCROLL_NEVER);
         panel.addView(grid, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, dp(108)));
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(118)));
 
         popup = new PopupWindow(panel, dp(596), dp(430), true);
         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
@@ -126,7 +130,7 @@ final class MoreApps {
                 int cols = Math.min(5, count);
                 ((GridLayoutManager) grid.getLayoutManager()).setSpanCount(cols);
                 int rows = (count + cols - 1) / cols;
-                int gridH = Math.min(dp(340), rows * dp(108));
+                int gridH = Math.min(dp(360), rows * dp(118));
                 int panelW = cols * dp(112) + dp(48);
                 grid.getLayoutParams().height = gridH;
                 grid.setAdapter(new Adapter(apps));
@@ -163,11 +167,42 @@ final class MoreApps {
             int byLabel = collator.compare(a.label, b.label);
             return byLabel != 0 ? byLabel : a.component.getPackageName().compareTo(b.component.getPackageName());
         });
+        apps.add(0, new App(activity.getString(R.string.screensaver),
+                new ComponentName(activity, ScreensaverActivity.class), photoIcon(), false));
         return apps;
+    }
+
+    /** A full-bleed clock, masked by the same rounded tile as the other apps. */
+    private Drawable photoIcon() {
+        int side = 256;
+        Bitmap bitmap = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(0xFF1A3148);
+        canvas.drawRect(0, 0, side, side, paint);
+        paint.setColor(0x22FFFFFF);
+        canvas.drawCircle(side * 0.5f, side * 0.18f, side * 0.55f, paint);
+        paint.setColor(0xFFF4F7FB);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(side * 0.045f);
+        float cx = side * 0.5f;
+        float cy = side * 0.52f;
+        float radius = side * 0.24f;
+        canvas.drawCircle(cx, cy, radius, paint);
+        canvas.drawLine(cx, cy, cx, cy - radius * 0.58f, paint);
+        canvas.drawLine(cx, cy, cx + radius * 0.46f, cy + radius * 0.12f, paint);
+        paint.setStyle(Paint.Style.FILL);
+        canvas.drawCircle(cx, cy, side * 0.032f, paint);
+        return new BitmapDrawable(activity.getResources(), bitmap);
     }
 
     private void open(App app) {
         popup.dismiss();
+        if (ScreensaverActivity.class.getName().equals(app.component.getClassName())) {
+            activity.startActivity(new Intent(activity, ScreensaverActivity.class));
+            return;
+        }
         Intent intent = new Intent(Intent.ACTION_MAIN).setComponent(app.component);
         if (app.leanback) intent.addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
@@ -197,17 +232,21 @@ final class MoreApps {
             tile.setGravity(Gravity.CENTER_HORIZONTAL);
             tile.setFocusable(true);
             tile.setClickable(true);
-            tile.setPadding(dp(6), dp(6), dp(6), dp(6));
+            int gap = dp(5);
+            int iconSize = dp(56);
+            android.widget.FrameLayout well = new android.widget.FrameLayout(activity);
+            well.setPadding(gap, gap, gap, gap);
             ImageView icon = new ImageView(activity);
             icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            float radius = 12 * density;
+            float radius = 14 * density;
             icon.setClipToOutline(true);
             icon.setOutlineProvider(new ViewOutlineProvider() {
                 @Override public void getOutline(View view, Outline outline) {
                     outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
                 }
             });
-            tile.addView(icon, new LinearLayout.LayoutParams(dp(56), dp(56)));
+            well.addView(icon, new android.widget.FrameLayout.LayoutParams(iconSize, iconSize));
+            tile.addView(well, new LinearLayout.LayoutParams(iconSize + gap * 2, iconSize + gap * 2));
             TextView name = new TextView(activity);
             name.setTextColor(0xF2FFFFFF);
             name.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 12);
@@ -217,7 +256,7 @@ final class MoreApps {
             name.setPadding(0, dp(6), 0, 0);
             tile.addView(name, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             tile.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            return new Holder(tile, icon, name);
+            return new Holder(tile, icon, well, name);
         }
 
         @Override
@@ -228,13 +267,11 @@ final class MoreApps {
             holder.itemView.setContentDescription(app.label);
             holder.itemView.setOnClickListener(v -> open(app));
             holder.itemView.setOnFocusChangeListener((v, focused) -> {
-                v.setScaleX(focused ? 1.08f : 1f);
-                v.setScaleY(focused ? 1.08f : 1f);
                 GradientDrawable stroke = new GradientDrawable();
                 stroke.setColor(0x00000000);
-                stroke.setCornerRadius(16 * density);
+                stroke.setCornerRadius(18 * density);
                 if (focused) stroke.setStroke(Math.max(2, dp(2)), 0xFFFFFFFF);
-                v.setBackground(stroke);
+                holder.well.setBackground(focused ? stroke : null);
             });
         }
 
@@ -245,11 +282,13 @@ final class MoreApps {
 
         final class Holder extends RecyclerView.ViewHolder {
             final ImageView icon;
+            final View well;
             final TextView name;
 
-            Holder(View tile, ImageView icon, TextView name) {
+            Holder(View tile, ImageView icon, View well, TextView name) {
                 super(tile);
                 this.icon = icon;
+                this.well = well;
                 this.name = name;
             }
         }

@@ -13,6 +13,7 @@ which is where the plain dock, the theme file, and the per-TV notes come from. T
 is in this tree. A stock CleanYourTV install does not have it.
 
 The long version, including the Hisense 75U75N limits, is [docs/scenic-home.md](docs/scenic-home.md).
+To put this same home on another TV, an assistant follows [docs/install.md](docs/install.md).
 
 ## What you see
 
@@ -79,3 +80,7 @@ that APK.
 The idle paintings are National Gallery of Art open-access images at the gallery's 4096px cap.
 Credits are in `launcher/app/src/main/assets/art/CREDITS.md`. The five backgrounds are the
 Couch TV night scenes, used at 1920x1080. Their note is in the scenic home guide.
+
+Open More apps and choose Screensaver. Art, Aerials, Photos, or All. Photos and All show a
+QR code: leave that screen open, scan it with a phone, and send jpeg, png, or webp pictures.
+They stay on the TV. Closing the screen turns the page off.

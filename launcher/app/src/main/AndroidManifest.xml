@@ -11,6 +11,8 @@
          on first launch as "App recommendations". INTERNET only loads the artwork address in that row. -->
     <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The update prompt installs a downloaded APK. The TV still asks before it replaces Home. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Needed since Android 10 to read the Wi-Fi network name for the network pill. Never requested at
@@ -105,9 +107,18 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".UpdateCheck$StatusReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".LauncherSettingsActivity"
             android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape" />
+        <activity
+            android:name=".ScreensaverActivity"
+            android:exported="true"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape" />
         <!-- The system input switcher (com.android.tv.action.VIEW_INPUTS), which is what the remote's Input

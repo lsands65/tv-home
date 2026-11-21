@@ -387,6 +387,75 @@ final class Config {
         return "art".equals(show) || "aerial".equals(show) ? show : "off";
     }
 
+    static final String SCREENSAVER_PREFS = "screensaver";
+    static final String SCREENSAVER_MODE = "mode";
+
+    /**
+     * What the idle screen plays. A choice in Screensaver wins. Otherwise the theme's idle_show,
+     * which is art for the living room.
+     */
+    static String screensaverMode(Context ctx) {
+        String saved = ctx.getSharedPreferences(SCREENSAVER_PREFS, Context.MODE_PRIVATE)
+                .getString(SCREENSAVER_MODE, "");
+        if ("art".equals(saved) || "aerial".equals(saved) || "photos".equals(saved) || "all".equals(saved)) {
+            return saved;
+        }
+        return idleShow(ctx);
+    }
+
+    /** The folder a phone, or a theme push, drops screensaver photos into. */
+    static File screensaverDir(Context ctx) {
+        File dir = dir(ctx);
+        return dir == null ? null : new File(dir, ThemeFiles.SCREENSAVER);
+    }
+
+    static int screensaverPhotoCount(Context ctx) {
+        File folder = screensaverDir(ctx);
+        File[] photos = folder == null ? null : folder.listFiles();
+        if (photos == null) return 0;
+        int count = 0;
+        for (File photo : photos) {
+            if (photo.isFile() && photo.length() >= 32 && photo.length() <= 40L * 1024 * 1024
+                    && ThemeFiles.screensaverImage(photo.getName())) count++;
+        }
+        return count;
+    }
+
+    /**
+     * Theme key update_repo: owner/name of the GitHub repo whose releases are updates.
+     * Anything that is not that shape keeps the living-room repo.
+     */
+    static String updateRepo(Context ctx) {
+        JSONObject json = theme(ctx);
+        String repo = json == null ? "" : string(json, "update_repo", "");
+        return repo.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+") ? repo : "lsands65/tv-home";
+    }
+
+    /**
+     * A token for a private repo. The update-token file next to the theme wins, so the token
+     * does not have to live in config.json. Empty when the repo is public.
+     */
+    static String updateToken(Context ctx) {
+        File dir = dir(ctx);
+        if (dir != null) {
+            String file = readToken(new File(dir, "update-token"));
+            if (!file.isEmpty()) return file;
+        }
+        JSONObject json = theme(ctx);
+        return json == null ? "" : string(json, "update_token", "");
+    }
+
+    private static String readToken(File file) {
+        try {
+            if (!file.isFile()) return "";
+            byte[] bytes = java.nio.file.Files.readAllBytes(file.toPath());
+            if (bytes.length > 400) return "";
+            return new String(bytes, java.nio.charset.StandardCharsets.UTF_8).trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** Theme key idle_seconds: how long the home waits before the screensaver. */
     static int idleSeconds(Context ctx) {
         JSONObject json = theme(ctx);

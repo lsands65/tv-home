@@ -30,9 +30,12 @@ import android.widget.RelativeLayout;
 import android.widget.TextView;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
@@ -70,7 +73,13 @@ final class Scenic {
         thread.setDaemon(true);
         return thread;
     });
-    private final String show;
+    private String show;
+    /** In All, the next advance plays one aerial instead of another still. */
+    private boolean aerialTurn;
+    /** The aerial playing now is one clip of All, then the stills resume. */
+    private boolean oneClip;
+    /** Aerials failed during this idle, so All stays on stills until the next time. */
+    private boolean aerialsGaveUp;
     private final int seconds;
     private final PathInterpolator slide = new PathInterpolator(0.16f, 1f, 0.3f, 1f);
 
@@ -90,7 +99,7 @@ final class Scenic {
     private boolean swallowUp;
     private int artIndex;
     private boolean artFront;
-    private List<String> artFiles = Collections.emptyList();
+    private List<Slide> artFiles = Collections.emptyList();
     private AerialProxy proxy;
     private MediaPlayer player;
     private Surface surface;
@@ -119,7 +128,7 @@ final class Scenic {
         this.recs = recs;
         this.glass = glass;
         this.allow = allow;
-        this.show = Config.idleShow(activity);
+        this.show = Config.screensaverMode(activity);
         this.seconds = Config.idleSeconds(activity);
     }
 
@@ -211,11 +220,12 @@ final class Scenic {
         tickClock();
         showScene(0, false);
         main.postDelayed(this::advanceScene, SCENE_MS);
-        artFiles = artFiles();
+        artFiles = slidesFor(show);
     }
 
     void resume() {
         resumed = true;
+        show = Config.screensaverMode(activity);
         tickClock();
         restartTimer();
     }
@@ -258,6 +268,10 @@ final class Scenic {
         main.postDelayed(idleTask, seconds * 1000L);
     }
 
+    boolean isIdle() {
+        return idle;
+    }
+
     /** The screensaver, now. Back pressed twice at home comes here. */
     void startNow() {
         main.removeCallbacks(idleTask);
@@ -269,14 +283,15 @@ final class Scenic {
             restartTimer();
             return;
         }
+        show = Config.screensaverMode(activity);
         idle = true;
         for (View view : fadeViews) {
             if (view == null) continue;
             view.animate().cancel();
             view.animate().alpha(0f).setDuration(FADE_MS).start();
         }
-        if ("art".equals(show)) showArt();
-        else if ("aerial".equals(show)) startAerial();
+        if ("aerial".equals(show)) startAerial();
+        else if (!"off".equals(show)) showArt();
         main.postDelayed(parkTask, PARK_MS);
     }
 
@@ -298,6 +313,9 @@ final class Scenic {
 
     private void wake() {
         idle = false;
+        oneClip = false;
+        aerialTurn = false;
+        aerialsGaveUp = false;
         main.removeCallbacks(parkTask);
         main.removeCallbacks(advanceArt);
         stopAerial();
@@ -416,16 +434,27 @@ final class Scenic {
     }
 
     private void showArt() {
+        artFiles = slidesFor(show);
         if (artFiles.isEmpty()) return;
         artIndex = (int) (Math.random() * artFiles.size());
         artFront = false;
+        aerialTurn = "all".equals(show);
         crossArt(true);
         main.postDelayed(advanceArt, ART_MS);
     }
 
     private final Runnable advanceArt = new Runnable() {
         @Override public void run() {
-            if (!idle || artFiles.isEmpty()) return;
+            if (!idle) return;
+            if ("all".equals(show) && aerialTurn && !aerialsGaveUp) {
+                aerialTurn = false;
+                oneClip = true;
+                startAerial();
+                return;
+            }
+            if ("all".equals(show) && !aerialsGaveUp) aerialTurn = true;
+            artFiles = slidesFor(show);
+            if (artFiles.isEmpty()) return;
             artIndex = (artIndex + 1) % artFiles.size();
             crossArt(true);
             main.postDelayed(this, ART_MS);
@@ -433,10 +462,11 @@ final class Scenic {
     };
 
     private void crossArt(boolean fade) {
-        String file = artFiles.get(artIndex);
+        if (artFiles.isEmpty()) return;
+        Slide slide = artFiles.get(Math.floorMod(artIndex, artFiles.size()));
         int edge = Math.max(1920, Math.max(root.getWidth(), root.getHeight()));
         io.execute(() -> {
-            Bitmap bitmap = decode(file, false, edge);
+            Bitmap bitmap = slide.file == null ? decode(slide.asset, false, edge) : decodeFile(slide.file, edge);
             main.post(() -> {
                 if (!idle || bitmap == null) return;
                 ImageView incoming = artFront ? artB : artA;
@@ -455,18 +485,53 @@ final class Scenic {
         });
     }
 
-    private List<String> artFiles() {
+    /** Art is the paintings. Photos are the phone uploads. All plays both, and aerials between them. */
+    private List<Slide> slidesFor(String mode) {
+        List<Slide> slides = new ArrayList<>();
+        if (!"photos".equals(mode)) slides.addAll(paintings());
+        if (!"art".equals(mode)) {
+            File folder = Config.screensaverDir(activity);
+            File[] photos = folder == null ? null : folder.listFiles();
+            if (photos != null) {
+                Arrays.sort(photos, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+                for (File photo : photos) {
+                    if (!photo.isFile() || photo.length() < 32 || photo.length() > 40L * 1024 * 1024) continue;
+                    if (!ThemeFiles.screensaverImage(photo.getName())) continue;
+                    slides.add(new Slide(photo));
+                }
+            }
+        }
+        return slides;
+    }
+
+    private List<Slide> paintings() {
         try {
             String[] names = activity.getAssets().list("art");
-            List<String> files = new ArrayList<>();
+            List<Slide> files = new ArrayList<>();
             if (names == null) return files;
+            Arrays.sort(names);
             for (String name : names) {
-                if (name.endsWith(".jpg")) files.add("art/" + name);
+                if (name.endsWith(".jpg")) files.add(new Slide("art/" + name));
             }
-            Collections.sort(files);
             return files;
         } catch (Exception e) {
             return Collections.emptyList();
+        }
+    }
+
+    /** A screensaver frame: a bundled asset, or a photo file from the theme folder. */
+    private static final class Slide {
+        final String asset;
+        final File file;
+
+        Slide(String asset) {
+            this.asset = asset;
+            this.file = null;
+        }
+
+        Slide(File file) {
+            this.asset = null;
+            this.file = file;
         }
     }
 
@@ -475,6 +540,7 @@ final class Scenic {
             if (proxy == null) proxy = new AerialProxy();
         } catch (Exception e) {
             Log.w(TAG, "aerial proxy failed: " + e.getMessage());
+            if (oneClip) finishClip();
             return;
         }
         aerialView.setAlpha(0f);
@@ -484,19 +550,28 @@ final class Scenic {
                     List<AerialCatalog.Clip> loaded = AerialCatalog.load(activity);
                     main.post(() -> {
                         clips = loaded;
-                        if (idle) playClip(0);
+                        if (!idle) return;
+                        if (clips.isEmpty() && oneClip) finishClip();
+                        else playClip(0);
                     });
                 } catch (Exception e) {
                     Log.w(TAG, "aerial catalog failed: " + e.getMessage());
+                    main.post(() -> { if (idle && oneClip) finishClip(); });
                 }
             });
         } else {
-            playClip(clip);
+            playClip(oneClip ? clip + 1 : clip);
         }
     }
 
     private void playClip(int next) {
-        if (!idle || proxy == null || clips.isEmpty() || aerialFailures >= 3) return;
+        if (!idle || proxy == null || clips.isEmpty() || aerialFailures >= 3) {
+            if (idle && oneClip) {
+                if (aerialFailures >= 3) aerialsGaveUp = true;
+                finishClip();
+            }
+            return;
+        }
         if (surface == null) {
             pendingClip = next;
             return;
@@ -517,10 +592,20 @@ final class Scenic {
                     }
                     return false;
                 });
-                player.setOnCompletionListener(mp -> main.post(() -> { if (idle) playClip(clip + 1); }));
+                player.setOnCompletionListener(mp -> main.post(() -> {
+                    if (!idle) return;
+                    if (oneClip) finishClip();
+                    else playClip(clip + 1);
+                }));
                 player.setOnErrorListener((mp, what, extra) -> {
                     aerialFailures++;
-                    main.post(() -> { if (idle) playClip(clip + 1); });
+                    main.post(() -> {
+                        if (!idle) return;
+                        if (oneClip) {
+                            if (aerialFailures >= 3) aerialsGaveUp = true;
+                            finishClip();
+                        } else playClip(clip + 1);
+                    });
                     return true;
                 });
             } else {
@@ -531,8 +616,31 @@ final class Scenic {
             player.prepareAsync();
         } catch (Exception e) {
             aerialFailures++;
-            main.post(() -> { if (idle) playClip(clip + 1); });
+            main.post(() -> {
+                if (!idle) return;
+                if (oneClip) finishClip();
+                else playClip(clip + 1);
+            });
         }
+    }
+
+    /** One aerial from All finished. The next still comes back, then another aerial after the wait. */
+    private void finishClip() {
+        oneClip = false;
+        try {
+            if (player != null) player.reset();
+        } catch (Exception ignored) {
+        }
+        aerialView.animate().cancel();
+        aerialView.animate().alpha(0f).setDuration(FADE_MS).start();
+        if (!idle || !"all".equals(show)) return;
+        artFiles = slidesFor(show);
+        if (!artFiles.isEmpty()) {
+            artIndex = (artIndex + 1) % artFiles.size();
+            crossArt(false);
+        }
+        aerialTurn = !aerialsGaveUp;
+        main.postDelayed(advanceArt, ART_MS);
     }
 
     private void stopAerial() {
@@ -564,6 +672,61 @@ final class Scenic {
             Log.w(TAG, "scene " + path + " " + e.getMessage());
             return null;
         }
+    }
+
+    /** A photo from the screensaver folder, sampled down to the screen and turned upright. */
+    private Bitmap decodeFile(File file, int maxEdge) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeFile(file.getAbsolutePath(), bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inPreferredConfig = Bitmap.Config.RGB_565;
+            int longEdge = Math.max(bounds.outWidth, bounds.outHeight);
+            options.inSampleSize = 1;
+            while (options.inSampleSize * 2L * maxEdge < longEdge) options.inSampleSize *= 2;
+            Bitmap bitmap = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
+            return bitmap == null ? null : upright(bitmap, file);
+        } catch (Exception e) {
+            Log.w(TAG, "photo " + file.getName() + " " + e.getMessage());
+            return null;
+        }
+    }
+
+    /** Phone photos store rotation in EXIF. BitmapFactory leaves them on their side without this. */
+    private Bitmap upright(Bitmap bitmap, File file) {
+        int orientation;
+        try (InputStream in = new FileInputStream(file)) {
+            orientation = new android.media.ExifInterface(in).getAttributeInt(
+                    android.media.ExifInterface.TAG_ORIENTATION,
+                    android.media.ExifInterface.ORIENTATION_NORMAL);
+        } catch (Exception e) {
+            return bitmap;
+        }
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case android.media.ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.postRotate(90);
+                break;
+            case android.media.ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.postRotate(180);
+                break;
+            case android.media.ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.postRotate(270);
+                break;
+            case android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.preScale(-1f, 1f);
+                break;
+            case android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.preScale(1f, -1f);
+                break;
+            default:
+                return bitmap;
+        }
+        Bitmap turned = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        if (turned != bitmap) bitmap.recycle();
+        return turned;
     }
 
     private void add(View view, int index) {

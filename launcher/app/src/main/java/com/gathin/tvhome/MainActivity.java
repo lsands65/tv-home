@@ -1039,6 +1039,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 handler.postDelayed(this::playPetalShower, 450);
             }
         }
+        UpdateCheck.onHomeResumed(this);
+    }
+
+    /** The painting or aerial is up, so an update prompt waits. */
+    boolean screensaverOn() {
+        return scenic != null && scenic.isIdle();
+    }
+
+    /** A folder, prompt, or library is open, so an update prompt waits. */
+    boolean somethingOpen() {
+        return openPopup != null || cardPrompt != null;
     }
 
     /** Launcher settings' change count (Config.SETTINGS_REVISION_KEY); onResume rebuilds Home when it moved. */

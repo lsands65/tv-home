@@ -62,8 +62,9 @@ If `classes.dex` is locked during the build, stop the Gradle daemons (`.\gradlew
 from `launcher\`) and build again. Stream the APK with `adb install`. The base64 upload in
 `build-and-install.ps1` times out on this APK.
 
-Copy `themes/living-room/config.json` and change `dock_apps` and `sports_epg` before you push it
-to a different TV. The copy in this repo is one household's dock and guide address.
+Copy `themes/living-room/config.json` and change `dock_apps` before you push it to a different
+TV. `sports_epg` in this repo is empty. A household's guide address stays on that TV and is
+not committed. The install steps for another set are in [install.md](install.md).
 
 ## Theme
 
@@ -125,7 +126,21 @@ open-access images, fetched at the gallery's 4096px cap and cropped to fill the 
 `launcher/app/src/main/assets/art/CREDITS.md`. 1080px crops are too soft on this panel; do not
 swap in the Couch TV art pack or the Art Institute's public 1686px cap.
 
-`idle_show: aerial` plays Apple's published 1080p H.264 aerials, streamed, through the launcher's
+More apps has Screensaver. It chooses Art, Aerials, Photos, or All. Art is the paintings.
+Aerials are the Apple streams. Photos are pictures from a phone. All takes turns: a painting or
+a photo, then one aerial, then another still.
+
+Photos and All show a QR code. Leave that screen open, scan it, and the phone page can send
+jpeg, png, or webp files. They stay on the TV. Closing the screen stops the page. The address
+has a new token each time, so an old scan does not keep working. Remove photos is on that screen.
+
+A theme can still drop the same files in `themes/living-room/screensaver/` and push them. That
+folder is not part of the repo. Screensaver has to be on Photos or All before those files play.
+Phone pictures are turned upright and cropped to fill the screen. A theme push with no
+`screensaver` folder leaves the photos already on the TV alone. `-Reset` clears them.
+
+`idle_show` in the theme is the choice until someone picks one in Screensaver. `aerial` plays
+Apple's published 1080p H.264 aerials, streamed, through the launcher's
 own HTTP proxy (`AerialProxy`), because the system player checks those certificates in another
 process. Do not turn certificate checks off, do not use the cleartext phobos URLs, and do not
 copy the video files into the app.
@@ -149,6 +164,26 @@ cut-out. They are the Couch TV night scenes, made for that project with an image
 shipped here at 1920x1080. Couch TV's note is that they are not real places and you may use them
 however you like: `couch-tv` `tv-home/web/backgrounds/CREDITS.md`. The `@2x` upscales are not
 bundled. Scenes change about every 20 seconds and crossfade for 1.6 seconds.
+
+## Updates
+
+On each return to Home, and at most every 12 hours, the launcher asks GitHub for the latest
+release of `lsands65/tv-home` (a theme can set `update_repo` to another `owner/name`). The
+release tag is the version code, such as `v9`, and one of the files is the APK. A higher tag
+than the installed build opens a prompt. Install downloads it and hands it to the TV, which
+still asks before replacing Home. Not now hides that version until a newer one exists.
+
+The repo is private, so the request needs a token that can read it. Put that token, and nothing
+else, in `update-token` next to the theme file on the TV
+(`/sdcard/Android/data/com.gathin.tvhome/files/update-token`), or in the theme as `update_token`.
+A public repo needs neither. Do not commit the token.
+
+```powershell
+gh release create v9 app\build\outputs\apk\release\app-release.apk --repo lsands65/tv-home --title "2.8"
+```
+
+Build with `versionCode` 9 and `versionName` `2.8` before cutting that release. The tag has to
+match the code, or Home ignores the release.
 
 ## Hisense 75U75N
 

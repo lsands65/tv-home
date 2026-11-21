@@ -65,9 +65,12 @@ del() { echo "rm -f $DIR/$1 2>/dev/null; content delete --uri $URI/$1 2>/dev/nul
 # itself, and an on-TV pick of one of its pictures is read back from it (WallpaperRotation.chosen), so a reset
 # that left the pictures behind still shows the theme it just removed. Both paths use this one string.
 CLEAR_WALLPAPERS="mkdir -p $DIR/wallpapers 2>/dev/null; rm -f $DIR/wallpapers/*.[jJ][pP][gG] $DIR/wallpapers/*.[jJ][pP][eE][gG] $DIR/wallpapers/*.[pP][nN][gG] $DIR/wallpapers/*.[wW][eE][bB][pP] 2>/dev/null; content delete --uri $URI/wallpapers 2>/dev/null"
+# Photos for the scenic screensaver. A theme that has the folder replaces whatever is on the TV.
+# A theme without the folder leaves the TV's photos alone. --reset clears them, back to the paintings.
+CLEAR_SCREENSAVER="mkdir -p $DIR/screensaver 2>/dev/null; rm -f $DIR/screensaver/* 2>/dev/null; content delete --uri $URI/screensaver 2>/dev/null"
 
 if [ "${1:-}" = --reset ]; then
-  tv "mkdir -p $DIR 2>/dev/null; $(del config.json); $(del wallpaper.jpg); $(del wallpapers/captions.txt); $CLEAR_WALLPAPERS; printf '%s' '$REVISION' > $TMP-theme_revision; $(put theme_revision); $RESTART; echo reset" | tail -n 1
+  tv "mkdir -p $DIR 2>/dev/null; $(del config.json); $(del wallpaper.jpg); $(del wallpapers/captions.txt); $CLEAR_WALLPAPERS; $CLEAR_SCREENSAVER; printf '%s' '$REVISION' > $TMP-theme_revision; $(put theme_revision); $RESTART; echo reset" | tail -n 1
   exit 0
 fi
 THEME="${THEME_ARG:?usage: theme.sh <theme folder> | --reset}"
@@ -103,6 +106,23 @@ if [ -f "$THEME/wallpapers/captions.txt" ]; then
   tv "$(put wallpapers/captions.txt)" >/dev/null
 else
   tv "$(del wallpapers/captions.txt)" >/dev/null
+fi
+# Own screensaver photos. Absent folder: leave the TV alone. Present folder, even empty: replace the set.
+if [ -d "$THEME/screensaver" ]; then
+  tv "$CLEAR_SCREENSAVER" >/dev/null
+  for IMAGE in "$THEME"/screensaver/*; do
+    [ -f "$IMAGE" ] || continue
+    NAME=$(basename "$IMAGE")
+    case "$NAME" in
+      *.[jJ][pP][gG]|*.[jJ][pP][eE][gG]|*.[pP][nN][gG]|*.[wW][eE][bB][pP]) ;;
+      *) continue ;;
+    esac
+    [[ "$NAME" =~ ^[A-Za-z0-9_\ \(\).+-]+\.[A-Za-z0-9]+$ ]] || { echo "unsupported screensaver filename: $NAME" >&2; exit 1; }
+    STAGE="$TMP-screensaver-$(printf '%s' "$NAME" | tr -c 'A-Za-z0-9._-' '-')"
+    tv --push "$IMAGE" "$STAGE" >/dev/null
+    ENC=$("$PY" -I -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))' "$NAME")
+    tv "rm -f \"$DIR/screensaver/$NAME\" 2>/dev/null; { o=\$(content write --uri $URI/screensaver/$ENC < $STAGE 2>&1) && case \"\$o\" in *'Unsupported operation'*) false ;; esac; } || cp $STAGE \"$DIR/screensaver/$NAME\" 2>/dev/null; rm -f $STAGE" >/dev/null
+  done
 fi
 tv "printf '%s' '$REVISION' > $TMP-theme_revision; $(put theme_revision)" >/dev/null
 tv "$RESTART; echo applied" | tail -n 1

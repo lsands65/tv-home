@@ -8,7 +8,8 @@ this file repeats their rules in the form an agent needs, and links to them for 
 
 | You were asked to | Do this |
 |---|---|
-| Clean up a TV: debloat it, install the launcher, push a theme | Read [PROMPT.md](PROMPT.md) and follow it exactly, on the real TV. Use the tools in `tools/` and the launcher in `launcher/` rather than writing new ones; the only file you need to change is `launcher/app/src/main/res/values/config.xml`, or a theme's `config.json`, for this TV. Do not edit the repo's docs, tests or other code, and do not open issues or pull requests unless the person asks you to. |
+| Install this living-room home on a TV | Read [docs/install.md](docs/install.md) and follow it. Do not follow [PROMPT.md](PROMPT.md). This tree is not the stock CleanYourTV cleaner: the launcher has the scenic home, it uses the network, and debugging stays on unless the person asks you to turn it off. |
+| Clean up a TV the CleanYourTV way: debloat it, then a plain launcher | Read [PROMPT.md](PROMPT.md) and follow it exactly, on the real TV. Use the tools in `tools/` and the launcher in `launcher/` rather than writing new ones; the only file you need to change is `launcher/app/src/main/res/values/config.xml`, or a theme's `config.json`, for this TV. Do not edit the repo's docs, tests or other code, and do not open issues or pull requests unless the person asks you to. |
 | Change this repo: a TV list, a fix, a translation, a theme, docs | Skip the next section and read on from [Repo map](#repo-map). |
 
 ### Cleaning a TV: the rules that are not negotiable
@@ -69,7 +70,7 @@ share their TV's list afterwards, follow [`docs/workflows/tv-list.md`](docs/work
 | `CODE_OF_CONDUCT.md` | Includes the rule against publishing device identifiers, Wi-Fi names and IPs. |
 | `examples/` | One folder per tested TV model: `debloat.txt`, `tv.json` (its row in the TV tables), sometimes a `README.md` and a `config.json`. Indexed in `examples/README.md`, whose table is generated too. |
 | `docs/` | `docs/TROUBLESHOOTING.md`, the module-card contract (`docs/modules.md`), `docs/devices/` for models with notes but no tested list, and the [workflows](#workflows). |
-| `launcher/` | The reference launcher, package `com.gathin.tvhome`: plain Java, AndroidX RecyclerView and DynamicAnimation, `minSdk` 26, no `INTERNET` permission. |
+| `launcher/` | This home, package `com.gathin.tvhome`: plain Java, `minSdk` 26. It uses the network for artwork, sports, aerials, and update checks. Install steps are [docs/install.md](docs/install.md). |
 | `themes/` | One folder per theme: `config.json`, a required `screenshot.jpg`, optional wallpapers. Keys are documented in `themes/README.md`. |
 | `addons/` | Optional module-card apps, each its own Gradle project, never built into the launcher. |
 | `tools/` | The ADB client (`tv.py`) and the scripts, listed in the README's Tools table. Shell scripts have PowerShell twins. Each script's usage is in its first lines, and the larger ones have a guide beside them (`tools/*.md`): read it before running the script. |
