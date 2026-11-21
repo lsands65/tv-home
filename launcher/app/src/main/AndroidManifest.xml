@@ -7,6 +7,10 @@
     <uses-feature android:name="android.hardware.wifi" android:required="false" />
     <uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
+    <!-- Reads the recommendation rows apps already publish (Preview Programs and Watch Next). Asked for
+         on first launch as "App recommendations". INTERNET only loads the artwork address in that row. -->
+    <uses-permission android:name="android.permission.READ_TV_LISTINGS" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- Needed since Android 10 to read the Wi-Fi network name for the network pill. Never requested at
@@ -68,6 +72,7 @@
         <!-- Coocaa OS sources for the Inputs menu (coocaa_sources); see CoocaaSources. -->
         <provider android:authorities="com.skyworth.tv.provider" />
         <provider android:authorities="com.skyworth.tv.sdk.provider" />
+        <provider android:authorities="android.media.tv" />
     </queries>
 
     <application
@@ -76,6 +81,7 @@
         android:banner="@drawable/banner"
         android:theme="@style/Theme.TvHome"
         android:allowBackup="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:localeConfig="@xml/locales_config">
 
         <activity
@@ -193,6 +199,32 @@
         <service
             android:name=".ClockDream"
             android:label="@string/dream_name"
+            android:exported="true"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- Aerial videos while the set sits idle. `settings put secure screensaver_components
+             com.gathin.tvhome/.AerialDream` selects it. -->
+        <service
+            android:name=".AerialDream"
+            android:label="@string/aerial_dream_name"
+            android:exported="true"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
+        <!-- Whole paintings while the set sits idle. `settings put secure screensaver_components
+             com.gathin.tvhome/.ArtDream` selects it. -->
+        <service
+            android:name=".ArtDream"
+            android:label="@string/art_dream_name"
             android:exported="true"
             android:permission="android.permission.BIND_DREAM_SERVICE">
             <intent-filter>

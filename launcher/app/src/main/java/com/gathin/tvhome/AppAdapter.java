@@ -57,6 +57,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         boolean onTileVerticalKey(int position, int keyCode);
 
         void onLibraryRequested();
+        void onMoreApps();
         void onLibraryFocused();
         /** Hold OK on a tile: the activity shows the tile menu (move, remove from Home, app info). */
         void onTileLongPress(int position, View card);
@@ -64,7 +65,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     }
 
     static final class Entry {
-        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2, EMPTY = 3;
+        static final int APP = 0, HOME_SETTINGS = 1, CARD = 2, EMPTY = 3, MORE = 4;
 
         final int kind;
         final String label;
@@ -216,6 +217,10 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private final Map<String, String> appLabels, appBanners;
     /** Every app tile is its icon on a card tinted from that icon, never its banner (config.xml, uniform_tiles). */
     private final boolean uniformTiles;
+    /** Square icon tiles for the scenic dock (theme key scenic). */
+    private final boolean scenic;
+    /** Scenic tile side in px. The dock sets this so the row stays inside its max width. */
+    private int scenicIconPx;
     private final List<Entry> items = new ArrayList<>();
 
     AppAdapter(Context ctx, TileListener listener, int dockSize, Config cfg) {
@@ -243,6 +248,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         this.appLabels = cfg.appLabels;
         this.appBanners = cfg.appBanners;
         this.uniformTiles = cfg.uniformTiles;
+        this.scenic = Config.scenic(ctx);
         // Tiles keep their identity across reload(), so a focused tile stays on its app instead of
         // its view being rebound to whatever app now sits in that slot.
         setHasStableIds(true);
@@ -300,6 +306,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             // The icon is only drawn (and sampled for the glow) when there is no banner, so a tile with a
             // banner skips loading and decoding it.
             Drawable icon = banner == null ? ri.loadIcon(pm) : null;
+            if (scenic && icon != null) icon = NativeIcon.of(ctx, icon);
             if (card != null) {
                 fresh.add(new Entry(Entry.CARD, label, component, banner, icon, card.caption, card.accent));
             } else {
@@ -330,6 +337,20 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         }
         docked = 0;
         while (docked < fresh.size() && isDocked(fresh.get(docked))) docked++;
+        if (scenic) {
+            // The home row is only the dock. Everything else lives in the folder at the end of it.
+            List<Drawable> marks = new ArrayList<>();
+            for (int i = docked; i < fresh.size() && marks.size() < 4; i++) {
+                Drawable src = fresh.get(i).icon;
+                if (src == null) continue;
+                marks.add(src.getConstantState() != null ? src.getConstantState().newDrawable().mutate() : src);
+            }
+            if (docked < fresh.size()) fresh.subList(docked, fresh.size()).clear();
+            fresh.add(docked, new Entry(Entry.MORE, ctx.getString(R.string.more_apps),
+                    new ComponentName(ctx.getPackageName(), "more-apps"), null,
+                    new FolderIcon(marks), null, 0xFF2C2E33));
+            docked++;
+        }
         emptySlots = dockRow && !reordering ? DockSlots.empty(docked, dockSize, fresh.size(), fillDock) : 0;
         for (int i = 0; i < emptySlots; i++) {
             fresh.add(docked + i, new Entry(Entry.EMPTY, "", new ComponentName(ctx, "empty-dock-slot-" + i),
@@ -400,6 +421,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         int width = parent.getWidth() > 0 ? parent.getWidth() : parent.getMeasuredWidth();
         int inner = width - parent.getPaddingLeft() - parent.getPaddingRight();
         int w = tileWidthPx(inner, parent.getHeight(), dockSize, rowsBelowDock, dockTitle, dockRow, density), h = tileHeightPx(w);
+        if (scenic) w = h = scenicIconPx > 0 ? scenicIconPx : Math.round(64 * density);
         View card = v.findViewById(R.id.card);
         ViewGroup.LayoutParams cardLp = card.getLayoutParams();
         cardLp.width = w;
@@ -418,13 +440,17 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         name.setLayoutParams(nameLp);
         // A sideways row would stretch a match_parent item across the whole screen: give it a grid column's width.
         if (singleRow) v.getLayoutParams().width = inner / dockSize;
-        if (uniformTiles) {
+        if (uniformTiles && !scenic) {
             // tvOS-style tile: a large centred mark, no caption inside the card.
             View icon = v.findViewById(R.id.icon);
             FrameLayout.LayoutParams iconLp = (FrameLayout.LayoutParams) icon.getLayoutParams();
-            iconLp.width = iconLp.height = Math.round(h * ICON_SHARE);
+            iconLp.width = iconLp.height = Math.round(h * (scenic ? 0.72f : ICON_SHARE));
             iconLp.bottomMargin = 0;
             icon.setLayoutParams(iconLp);
+        }
+        if (scenic) {
+            name.setVisibility(View.GONE);
+            v.setPadding(0, Math.round(6 * density), 0, Math.round(6 * density));
         }
         return new Holder(v, listener, animations, advancedEffects, reducedMotion, restNameAlpha, focusOvershoot);
     }
@@ -451,7 +477,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         // The dock has no labels, unless always_show_names asks for them (DockDecoration then makes room in the band).
         // In a single row every tile is the dock's kind: the big title above names it.
         boolean dockKind = dockRow && (singleRow || position < dockSize);
-        h.name.setVisibility(dockKind && restNameAlpha == 0f ? View.INVISIBLE : View.VISIBLE);
+        h.name.setVisibility(scenic ? View.GONE : dockKind && restNameAlpha == 0f ? View.INVISIBLE : View.VISIBLE);
         boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
         h.name.setAlpha(focused ? 1f : restNameAlpha);
         h.card.setScaleX(focused && animations ? focusScale() : 1f);
@@ -462,12 +488,34 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         h.banner.setScaleY(focused && advancedEffects ? 1.035f : 1f);
         // A fully opaque banner covers the whole card (centerCrop), so the card's own fill under it is drawn for
         // nothing on every frame; keep it under banners with transparent parts and under icon tiles.
-        h.card.setBackground(e.banner != null && e.banner.getOpacity() == PixelFormat.OPAQUE ? null : h.cardBackground);
-        if (uniformTiles && e.banner == null) {
+        boolean folder = e.kind == Entry.MORE;
+        if (scenic) {
+            ViewGroup.LayoutParams cardLp = h.card.getLayoutParams();
+            int side = scenicIconPx > 0 ? scenicIconPx : cardLp.width;
+            if (cardLp.width != side || cardLp.height != side) {
+                cardLp.width = cardLp.height = side;
+                h.card.setLayoutParams(cardLp);
+            }
+            FrameLayout.LayoutParams iconLp = (FrameLayout.LayoutParams) h.icon.getLayoutParams();
+            iconLp.width = iconLp.height = FrameLayout.LayoutParams.MATCH_PARENT;
+            iconLp.bottomMargin = 0;
+            iconLp.setMargins(0, 0, 0, 0);
+            h.icon.setLayoutParams(iconLp);
+            h.icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        }
+        boolean iconTile = folder || scenic || e.banner == null;
+        h.card.setBackground(!iconTile && e.banner.getOpacity() == PixelFormat.OPAQUE ? null : h.cardBackground);
+        if (folder) {
+            GradientDrawable plate = new GradientDrawable();
+            plate.setColor(0xF224262B);
+            h.card.setBackground(plate);
+        } else if (scenic) {
+            h.card.setBackground(null);
+        } else if (uniformTiles && iconTile) {
             if (e.backdrop == null) e.backdrop = backdrop(e.icon, ambientColorAt(position));
             h.card.setBackground(new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, e.backdrop));
         }
-        if (e.banner != null) {
+        if (!iconTile) {
             h.banner.setImageDrawable(e.banner);
             h.banner.setVisibility(View.VISIBLE);
             h.icon.setVisibility(View.GONE);
@@ -478,10 +526,15 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             h.icon.setImageDrawable(e.icon);
             h.icon.setVisibility(View.VISIBLE);
             h.label.setText(e.label);
-            h.label.setVisibility(uniformTiles ? View.GONE : View.VISIBLE);
+            h.label.setVisibility(uniformTiles || folder ? View.GONE : View.VISIBLE);
         }
-        h.card.setOnClickListener(v -> launch(e));
+        h.card.setContentDescription(e.label);
+        h.card.setOnClickListener(v -> {
+            if (folder) listener.onMoreApps();
+            else launch(e);
+        });
         h.card.setOnLongClickListener(v -> {
+            if (folder) return true;
             if (tileMenu) {
                 int pos = h.getBindingAdapterPosition();
                 if (pos != RecyclerView.NO_POSITION) listener.onTileLongPress(pos, v);
@@ -614,6 +667,15 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
             if (items.get(i).component.flattenToShortString().equals(key)) return i;
         }
         return -1;
+    }
+
+    /** Scenic dock tile size. Read by new tiles; the dock resizes ones already on screen. */
+    void setScenicIconPx(int px) {
+        scenicIconPx = px;
+    }
+
+    int scenicIconPx() {
+        return scenicIconPx;
     }
 
     /** Dock slots that hold an app: the whole dock unless some slots are empty. */
@@ -846,6 +908,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
 
     /** Corner radius for a tile of this width: 16dp at the design width, proportionally less when smaller. */
     static float cornerRadius(int tileWidthPx, float density) {
+        if (tileWidthPx > 0 && tileWidthPx < 100 * density) return tileWidthPx * 0.22f;
         return 16f * density * Math.min(1f, tileWidthPx / (DESIGN_W_DP * density));
     }
 
@@ -948,5 +1011,37 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                 }
             });
         }
+    }
+
+    /** Four app marks in a grid, so the dock tile reads as a folder. */
+    private static final class FolderIcon extends Drawable {
+        private final List<Drawable> icons;
+
+        FolderIcon(List<Drawable> icons) {
+            this.icons = icons;
+        }
+
+        @Override
+        public void draw(Canvas canvas) {
+            Rect bounds = getBounds();
+            int n = Math.min(4, icons.size());
+            if (bounds.width() <= 0 || n == 0) return;
+            int pad = Math.round(bounds.width() * 0.08f);
+            int gap = Math.round(bounds.width() * 0.1f);
+            int cell = (bounds.width() - pad * 2 - gap) / 2;
+            if (cell <= 0) return;
+            for (int i = 0; i < n; i++) {
+                Drawable icon = icons.get(i);
+                if (icon == null) continue;
+                int left = bounds.left + pad + (i % 2) * (cell + gap);
+                int top = bounds.top + pad + (i / 2) * (cell + gap);
+                icon.setBounds(left, top, left + cell, top + cell);
+                icon.draw(canvas);
+            }
+        }
+
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+        @Override public void setAlpha(int alpha) { }
+        @Override public void setColorFilter(android.graphics.ColorFilter filter) { }
     }
 }

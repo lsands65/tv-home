@@ -367,6 +367,44 @@ final class Config {
         return ctx.getExternalFilesDir(null);
     }
 
+    /** Theme key sports_epg: an XMLTV address. Empty when the theme does not set one. */
+    static String sportsEpg(Context ctx) {
+        File dir = dir(ctx);
+        JSONObject json = dir == null ? null : read(new File(dir, FILE_NAME));
+        return json == null ? "" : string(json, "sports_epg", "");
+    }
+
+    /** Theme key scenic: the scene, glass clock, and idle fade live in this launcher. */
+    static boolean scenic(Context ctx) {
+        JSONObject json = theme(ctx);
+        return json != null && json.optBoolean("scenic", false);
+    }
+
+    /** Theme key idle_show: art, aerial, or off. */
+    static String idleShow(Context ctx) {
+        JSONObject json = theme(ctx);
+        String show = json == null ? "off" : json.optString("idle_show", "off");
+        return "art".equals(show) || "aerial".equals(show) ? show : "off";
+    }
+
+    /** Theme key idle_seconds: how long the home waits before the screensaver. */
+    static int idleSeconds(Context ctx) {
+        JSONObject json = theme(ctx);
+        int seconds = json == null ? 0 : json.optInt("idle_seconds", 0);
+        return Math.max(0, Math.min(seconds, 3600));
+    }
+
+    private static JSONObject themeCached;
+    private static boolean themeLoaded;
+
+    private static JSONObject theme(Context ctx) {
+        if (themeLoaded) return themeCached;
+        themeLoaded = true;
+        File dir = dir(ctx);
+        themeCached = dir == null ? null : read(new File(dir, FILE_NAME));
+        return themeCached;
+    }
+
     static Config load(Context ctx) {
         Resources res = ctx.getResources();
         List<String> dock = new ArrayList<>(Arrays.asList(res.getStringArray(R.array.dock_apps)));

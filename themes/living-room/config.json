@@ -1,0 +1,36 @@
+{
+  "dock_apps": [
+    "org.jellyfin.androidtv",
+    "com.google.android.youtube.tv",
+    "com.limelight",
+    "ar.tvplayer.tv",
+    "com.android.tv.settings"
+  ],
+  "hidden_apps": [
+    "com.vt.tv.tvcenter",
+    "com.vt.tv.singlelisten",
+    "com.vt.tv.ai_sense",
+    "com.spocky.projengmenu"
+  ],
+  "live_tv_package": "com.vt.tv.tvcenter",
+  "columns": 6,
+  "rows_below_dock": 0,
+  "background_color": "#000000",
+  "wallpaper": false,
+  "sports_epg": "",
+  "focus_overshoot": false,
+  "ambient_glow": false,
+  "app_glow": false,
+  "scenic": true,
+  "uniform_tiles": true,
+  "dock_title": false,
+  "show_greeting": false,
+  "dock_opacity": 62,
+  "dock_even_padding": true,
+  "show_network_pill": false,
+  "show_inputs_pill": false,
+  "icon_only_inputs": true,
+  "wifi_label_width": 0,
+  "idle_show": "art",
+  "idle_seconds": 60
+}

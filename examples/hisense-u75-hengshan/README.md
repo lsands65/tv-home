@@ -3,6 +3,10 @@
 Notes for the `hengshan` board, firmware `STT2.230310.002`. The first list came from a Latin America U75; the
 75U75N notes are from a US unit (one owner, from 2026-10-22).
 
+The US set's home is the scenic living-room look (landscape, glass clock, Keep watching, a dock
+that wraps its icons). How to build it, push `themes/living-room`, and what not to disable on
+this firmware is in [the scenic home guide](../../docs/scenic-home.md).
+
 ## Live TV and inputs
 
 The Live TV app is `com.vt.tv.tvcenter`, and it also plays the HDMI inputs: the launcher's Inputs menu lists

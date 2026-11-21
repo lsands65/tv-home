@@ -1,0 +1,656 @@
+package com.gathin.tvhome;
+
+import android.app.Activity;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.BitmapShader;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Shader;
+import android.graphics.SurfaceTexture;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.media.MediaPlayer;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
+import android.text.format.DateFormat;
+import android.util.Log;
+import android.view.Gravity;
+import android.view.KeyEvent;
+import android.view.Surface;
+import android.view.TextureView;
+import android.view.View;
+import android.view.animation.PathInterpolator;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.RelativeLayout;
+import android.widget.TextView;
+
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+/**
+ * The scene, the glass clock behind the landscape, and the idle fade. The dock and Keep watching
+ * stay the launcher's own views. After the idle wait the chrome fades, a painting or an aerial
+ * fills the screen, and the first key slides the clock down and the rows up without opening an app.
+ */
+final class Scenic {
+
+    private static final String TAG = "TvHome";
+    private static final String[] SCENES = {"night", "golden", "water", "fog", "dawn"};
+    private static final int SCENE_MS = 20_000;
+    private static final int CROSS_MS = 1600;
+    private static final int FADE_MS = 800;
+    private static final int SLIDE_MS = 760;
+    private static final int PARK_MS = 840;
+    private static final int ART_MS = 45_000;
+
+    private final Activity activity;
+    private final FrameLayout root;
+    private final View grid;
+    private final View recs;
+    private final View glass;
+    private final Allow allow;
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final ExecutorService io = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "scenic");
+        thread.setDaemon(true);
+        return thread;
+    });
+    private final String show;
+    private final int seconds;
+    private final PathInterpolator slide = new PathInterpolator(0.16f, 1f, 0.3f, 1f);
+
+    private ImageView photoA, photoB, fgA, fgB, artA, artB;
+    private GlassClock clock;
+    private TextView date, keep;
+    private View scrim, topButtons;
+    private TextureView aerialView;
+    private View[] fadeViews;
+    private View[] topViews;
+    private View[] bottomViews;
+
+    private int scene;
+    private boolean front;
+    private boolean idle;
+    private boolean resumed;
+    private boolean swallowUp;
+    private int artIndex;
+    private boolean artFront;
+    private List<String> artFiles = Collections.emptyList();
+    private AerialProxy proxy;
+    private MediaPlayer player;
+    private Surface surface;
+    private List<AerialCatalog.Clip> clips = Collections.emptyList();
+    private int clip;
+    private int aerialFailures;
+    private int pendingClip = -1;
+    private final Runnable idleTask = this::goIdle;
+    private final Runnable parkTask = this::park;
+    /** Translation each view had before the idle slide, so wake puts it back there. */
+    private final Map<View, Float> parkedAt = new HashMap<>();
+
+    interface Allow { boolean get(); }
+
+    static Scenic attach(Activity activity, FrameLayout root, View grid, View recs, View glass, Allow allow) {
+        if (!Config.scenic(activity)) return null;
+        Scenic scenic = new Scenic(activity, root, grid, recs, glass, allow);
+        scenic.build();
+        return scenic;
+    }
+
+    private Scenic(Activity activity, FrameLayout root, View grid, View recs, View glass, Allow allow) {
+        this.activity = activity;
+        this.root = root;
+        this.grid = grid;
+        this.recs = recs;
+        this.glass = glass;
+        this.allow = allow;
+        this.show = Config.idleShow(activity);
+        this.seconds = Config.idleSeconds(activity);
+    }
+
+    private void build() {
+        root.setClipChildren(false);
+        for (int id : new int[] {R.id.leftBlock, R.id.greeting, R.id.clock, R.id.ampm, R.id.clockDivider, R.id.date}) {
+            View header = activity.findViewById(id);
+            if (header != null) header.setVisibility(View.GONE);
+        }
+        topButtons = activity.findViewById(R.id.topButtons);
+        if (topButtons.getLayoutParams() instanceof RelativeLayout.LayoutParams) {
+            RelativeLayout.LayoutParams pills = (RelativeLayout.LayoutParams) topButtons.getLayoutParams();
+            pills.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+            pills.addRule(RelativeLayout.ALIGN_PARENT_END);
+            pills.removeRule(RelativeLayout.ALIGN_BOTTOM);
+            pills.topMargin = 0;
+            pills.bottomMargin = 0;
+            topButtons.setLayoutParams(pills);
+        }
+        topButtons.setVisibility(View.GONE);
+
+        photoA = layer();
+        photoB = layer();
+        clock = new GlassClock(activity);
+        fgA = layer();
+        fgB = layer();
+        scrim = new View(activity);
+        GradientDrawable shade = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[] {0x00000000, 0x00000000, 0x99000000});
+        scrim.setBackground(shade);
+        artA = layer();
+        artB = layer();
+        artA.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        artB.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        aerialView = new TextureView(activity);
+        aerialView.setOpaque(false);
+        aerialView.setAlpha(0f);
+        aerialView.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int width, int height) {
+                surface = new Surface(surfaceTexture);
+                if (pendingClip >= 0) playClip(pendingClip);
+            }
+            @Override public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int width, int height) { }
+            @Override public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
+                surface = null;
+                return true;
+            }
+            @Override public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) { }
+        });
+
+        int at = 1;
+        add(photoA, at++);
+        add(photoB, at++);
+        add(clock, at++, topClock());
+        add(fgA, at++);
+        add(fgB, at++);
+        add(scrim, at++);
+        add(artA, at++);
+        add(artB, at++);
+        add(aerialView, at, match());
+
+        date = new TextView(activity);
+        date.setTextColor(0xF2FFFFFF);
+        date.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16);
+        date.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+        FrameLayout.LayoutParams dateLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        dateLp.topMargin = Math.round(28 * density());
+        root.addView(date, root.indexOfChild(glass), dateLp);
+
+        keep = new TextView(activity);
+        keep.setText("Keep watching");
+        keep.setTextColor(0xE6FFFFFF);
+        keep.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 15);
+        keep.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        keep.setVisibility(View.INVISIBLE);
+        root.addView(keep, root.indexOfChild(glass), new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+        recs.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> placeKeep());
+
+        fadeViews = new View[] {date, topButtons, clock, scrim, keep, recs, grid, glass};
+        topViews = new View[] {date, topButtons, clock};
+        bottomViews = new View[] {keep, recs, grid, glass};
+
+        photoB.setAlpha(0f);
+        fgB.setAlpha(0f);
+        artA.setAlpha(0f);
+        artB.setAlpha(0f);
+        tickClock();
+        showScene(0, false);
+        main.postDelayed(this::advanceScene, SCENE_MS);
+        artFiles = artFiles();
+    }
+
+    void resume() {
+        resumed = true;
+        tickClock();
+        restartTimer();
+    }
+
+    void pause() {
+        resumed = false;
+        main.removeCallbacks(idleTask);
+        main.removeCallbacks(advanceArt);
+        stopAerial();
+        if (idle) snapHome();
+    }
+
+    void destroy() {
+        pause();
+        io.shutdownNow();
+        if (proxy != null) proxy.close();
+    }
+
+    /** True when this key is the one that brings the home back and must not open an app. */
+    boolean onKey(KeyEvent event) {
+        int action = event.getAction();
+        if (idle) {
+            if (action == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+                wake();
+                swallowUp = true;
+            }
+            return true;
+        }
+        if (swallowUp && action == KeyEvent.ACTION_UP) {
+            swallowUp = false;
+            return true;
+        }
+        if (action == KeyEvent.ACTION_DOWN) restartTimer();
+        return false;
+    }
+
+    private void restartTimer() {
+        main.removeCallbacks(idleTask);
+        if (!resumed || seconds <= 0 || "off".equals(show)) return;
+        main.postDelayed(idleTask, seconds * 1000L);
+    }
+
+    /** The screensaver, now. Back pressed twice at home comes here. */
+    void startNow() {
+        main.removeCallbacks(idleTask);
+        goIdle();
+    }
+
+    private void goIdle() {
+        if (!resumed || idle || !allow.get()) {
+            restartTimer();
+            return;
+        }
+        idle = true;
+        for (View view : fadeViews) {
+            if (view == null) continue;
+            view.animate().cancel();
+            view.animate().alpha(0f).setDuration(FADE_MS).start();
+        }
+        if ("art".equals(show)) showArt();
+        else if ("aerial".equals(show)) startAerial();
+        main.postDelayed(parkTask, PARK_MS);
+    }
+
+    /** Slides each view off from its own translation and remembers that spot. The focus ring
+     *  lives in its translation; putting every view back at 0 left Keep watching at the top. */
+    private void park() {
+        if (!idle) return;
+        float away = root.getHeight() * 0.55f;
+        for (View view : topViews) shift(view, -away);
+        for (View view : bottomViews) shift(view, away);
+    }
+
+    private void shift(View view, float delta) {
+        if (view == null || parkedAt.containsKey(view)) return;
+        float rest = view.getTranslationY();
+        parkedAt.put(view, rest);
+        view.setTranslationY(rest + delta);
+    }
+
+    private void wake() {
+        idle = false;
+        main.removeCallbacks(parkTask);
+        main.removeCallbacks(advanceArt);
+        stopAerial();
+        for (View view : topViews) rise(view);
+        for (View view : bottomViews) rise(view);
+        if (scrim != null) {
+            scrim.animate().cancel();
+            scrim.animate().alpha(1f).setDuration(520).start();
+        }
+        artA.animate().cancel();
+        artB.animate().cancel();
+        artA.animate().alpha(0f).setDuration(FADE_MS).start();
+        artB.animate().alpha(0f).setDuration(FADE_MS).start();
+        restartTimer();
+    }
+
+    private void rise(View view) {
+        if (view == null) return;
+        Float home = parkedAt.remove(view);
+        float y = home == null ? view.getTranslationY() : home;
+        view.animate().cancel();
+        view.animate().alpha(1f).translationY(y).setDuration(SLIDE_MS).setInterpolator(slide).start();
+    }
+
+    private void snapHome() {
+        idle = false;
+        main.removeCallbacks(parkTask);
+        for (View view : fadeViews) {
+            if (view == null) continue;
+            view.animate().cancel();
+            view.setAlpha(1f);
+            Float home = parkedAt.remove(view);
+            if (home != null) view.setTranslationY(home);
+        }
+        artA.animate().cancel();
+        artB.animate().cancel();
+        artA.setAlpha(0f);
+        artB.setAlpha(0f);
+    }
+
+    private void tickClock() {
+        Date now = new Date();
+        boolean hours12 = !DateFormat.is24HourFormat(activity);
+        clock.setTime(new SimpleDateFormat(hours12 ? "h:mm" : "HH:mm", Locale.getDefault()).format(now));
+        date.setText(new SimpleDateFormat("EEEE d MMMM", Locale.getDefault()).format(now));
+        main.removeCallbacks(clockTick);
+        long delay = 60_000L - (System.currentTimeMillis() % 60_000L) + 200L;
+        main.postDelayed(clockTick, delay);
+    }
+
+    private final Runnable clockTick = this::tickClock;
+
+    private void advanceScene() {
+        if (activity.isDestroyed()) return;
+        showScene((scene + 1) % SCENES.length, true);
+        main.postDelayed(this::advanceScene, SCENE_MS);
+    }
+
+    private void showScene(int index, boolean fade) {
+        scene = index;
+        String name = SCENES[index];
+        io.execute(() -> {
+            Bitmap photo = decode("scenes/" + name + ".jpg", false, 1920);
+            Bitmap fg = hasCutout(name) ? decode("scenes/" + name + "_fg.webp", true, 1920) : null;
+            Bitmap glassBmp = decode("scenes/" + name + "_glass.jpg", false, 1280);
+            main.post(() -> {
+                if (activity.isDestroyed()) return;
+                clock.setGlass(glassBmp);
+                ImageView photoIn = front ? photoB : photoA;
+                ImageView photoOut = front ? photoA : photoB;
+                ImageView fgIn = front ? fgB : fgA;
+                ImageView fgOut = front ? fgA : fgB;
+                photoIn.setImageBitmap(photo);
+                fgIn.setImageBitmap(fg);
+                if (!fade) {
+                    photoIn.setAlpha(1f);
+                    photoOut.setAlpha(0f);
+                    fgIn.setAlpha(fg == null ? 0f : 1f);
+                    fgOut.setAlpha(0f);
+                } else {
+                    photoIn.setAlpha(0f);
+                    fgIn.setAlpha(0f);
+                    photoIn.animate().alpha(1f).setDuration(CROSS_MS).start();
+                    photoOut.animate().alpha(0f).setDuration(CROSS_MS).start();
+                    fgIn.animate().alpha(fg == null ? 0f : 1f).setDuration(CROSS_MS).start();
+                    fgOut.animate().alpha(0f).setDuration(CROSS_MS).start();
+                }
+                front = !front;
+            });
+        });
+    }
+
+    private static boolean hasCutout(String name) {
+        return !"water".equals(name);
+    }
+
+    void placeKeep() {
+        if (idle) return;
+        if (recs.getVisibility() != View.VISIBLE || recs.getHeight() == 0) {
+            keep.setVisibility(View.INVISIBLE);
+            return;
+        }
+        keep.setVisibility(View.VISIBLE);
+        if (keep.getHeight() == 0) {
+            keep.post(this::placeKeep);
+            return;
+        }
+        keep.setX(recs.getPaddingLeft());
+        // Layout position, so the idle slide (translation) does not get baked into the label.
+        int y = Math.round(recs.getTop() - keep.getHeight() - 8 * density());
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) keep.getLayoutParams();
+        if (lp.topMargin != y) {
+            lp.topMargin = y;
+            keep.setLayoutParams(lp);
+        }
+    }
+
+    private void showArt() {
+        if (artFiles.isEmpty()) return;
+        artIndex = (int) (Math.random() * artFiles.size());
+        artFront = false;
+        crossArt(true);
+        main.postDelayed(advanceArt, ART_MS);
+    }
+
+    private final Runnable advanceArt = new Runnable() {
+        @Override public void run() {
+            if (!idle || artFiles.isEmpty()) return;
+            artIndex = (artIndex + 1) % artFiles.size();
+            crossArt(true);
+            main.postDelayed(this, ART_MS);
+        }
+    };
+
+    private void crossArt(boolean fade) {
+        String file = artFiles.get(artIndex);
+        int edge = Math.max(1920, Math.max(root.getWidth(), root.getHeight()));
+        io.execute(() -> {
+            Bitmap bitmap = decode(file, false, edge);
+            main.post(() -> {
+                if (!idle || bitmap == null) return;
+                ImageView incoming = artFront ? artB : artA;
+                ImageView outgoing = artFront ? artA : artB;
+                incoming.setImageBitmap(bitmap);
+                if (!fade) {
+                    incoming.setAlpha(1f);
+                    outgoing.setAlpha(0f);
+                } else {
+                    incoming.setAlpha(0f);
+                    incoming.animate().alpha(1f).setDuration(FADE_MS).start();
+                    outgoing.animate().alpha(0f).setDuration(FADE_MS).start();
+                }
+                artFront = !artFront;
+            });
+        });
+    }
+
+    private List<String> artFiles() {
+        try {
+            String[] names = activity.getAssets().list("art");
+            List<String> files = new ArrayList<>();
+            if (names == null) return files;
+            for (String name : names) {
+                if (name.endsWith(".jpg")) files.add("art/" + name);
+            }
+            Collections.sort(files);
+            return files;
+        } catch (Exception e) {
+            return Collections.emptyList();
+        }
+    }
+
+    private void startAerial() {
+        try {
+            if (proxy == null) proxy = new AerialProxy();
+        } catch (Exception e) {
+            Log.w(TAG, "aerial proxy failed: " + e.getMessage());
+            return;
+        }
+        aerialView.setAlpha(0f);
+        if (clips.isEmpty()) {
+            io.execute(() -> {
+                try {
+                    List<AerialCatalog.Clip> loaded = AerialCatalog.load(activity);
+                    main.post(() -> {
+                        clips = loaded;
+                        if (idle) playClip(0);
+                    });
+                } catch (Exception e) {
+                    Log.w(TAG, "aerial catalog failed: " + e.getMessage());
+                }
+            });
+        } else {
+            playClip(clip);
+        }
+    }
+
+    private void playClip(int next) {
+        if (!idle || proxy == null || clips.isEmpty() || aerialFailures >= 3) return;
+        if (surface == null) {
+            pendingClip = next;
+            return;
+        }
+        pendingClip = -1;
+        clip = Math.floorMod(next, clips.size());
+        try {
+            if (player == null) {
+                player = new MediaPlayer();
+                player.setOnPreparedListener(mp -> {
+                    aerialFailures = 0;
+                    mp.setVolume(0f, 0f);
+                    mp.start();
+                });
+                player.setOnInfoListener((mp, what, extra) -> {
+                    if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START && idle) {
+                        aerialView.animate().alpha(1f).setDuration(FADE_MS).start();
+                    }
+                    return false;
+                });
+                player.setOnCompletionListener(mp -> main.post(() -> { if (idle) playClip(clip + 1); }));
+                player.setOnErrorListener((mp, what, extra) -> {
+                    aerialFailures++;
+                    main.post(() -> { if (idle) playClip(clip + 1); });
+                    return true;
+                });
+            } else {
+                player.reset();
+            }
+            player.setSurface(surface);
+            player.setDataSource(activity, Uri.parse(proxy.urlFor(clips.get(clip).video)));
+            player.prepareAsync();
+        } catch (Exception e) {
+            aerialFailures++;
+            main.post(() -> { if (idle) playClip(clip + 1); });
+        }
+    }
+
+    private void stopAerial() {
+        pendingClip = -1;
+        if (player != null) {
+            try { player.reset(); } catch (Exception ignored) { }
+        }
+        aerialView.animate().cancel();
+        aerialView.setAlpha(0f);
+    }
+
+    private Bitmap decode(String path, boolean alpha, int maxEdge) {
+        try (InputStream in = activity.getAssets().open(path)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) >= 0) out.write(buf, 0, n);
+            byte[] bytes = out.toByteArray();
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+            BitmapFactory.Options options = new BitmapFactory.Options();
+            options.inPreferredConfig = alpha ? Bitmap.Config.ARGB_8888 : Bitmap.Config.RGB_565;
+            int longEdge = Math.max(bounds.outWidth, bounds.outHeight);
+            options.inSampleSize = 1;
+            while (options.inSampleSize * 2L * maxEdge < longEdge) options.inSampleSize *= 2;
+            return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
+        } catch (Exception e) {
+            Log.w(TAG, "scene " + path + " " + e.getMessage());
+            return null;
+        }
+    }
+
+    private void add(View view, int index) {
+        add(view, index, match());
+    }
+
+    private void add(View view, int index, FrameLayout.LayoutParams params) {
+        root.addView(view, index, params);
+    }
+
+    private ImageView layer() {
+        ImageView view = new ImageView(activity);
+        view.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        return view;
+    }
+
+    private FrameLayout.LayoutParams match() {
+        return new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+    }
+
+    private FrameLayout.LayoutParams topClock() {
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, Math.round(230 * density()), Gravity.TOP);
+        params.topMargin = Math.round(64 * density());
+        return params;
+    }
+
+    private float density() {
+        return activity.getResources().getDisplayMetrics().density;
+    }
+
+    /** Giant time filled with the scene's blurred glass, sitting behind the landscape cut-out. */
+    private static final class GlassClock extends View {
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint frost = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Matrix matrix = new Matrix();
+        private Bitmap glass;
+        private String time = "";
+
+        GlassClock(Activity activity) {
+            super(activity);
+            setWillNotDraw(false);
+            fill.setTextAlign(Paint.Align.CENTER);
+            fill.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
+            frost.setTextAlign(Paint.Align.CENTER);
+            frost.setTypeface(fill.getTypeface());
+            frost.setColor(0x8CFFFFFF);
+            stroke.setStyle(Paint.Style.STROKE);
+            stroke.setStrokeWidth(activity.getResources().getDisplayMetrics().density * 3f);
+            stroke.setColor(0xB3FFFFFF);
+            stroke.setTextAlign(Paint.Align.CENTER);
+            stroke.setTypeface(fill.getTypeface());
+        }
+
+        void setGlass(Bitmap bitmap) {
+            glass = bitmap;
+            invalidate();
+        }
+
+        void setTime(String time) {
+            this.time = time == null ? "" : time;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            if (time.isEmpty() || getWidth() == 0) return;
+            float size = getHeight() * 0.92f;
+            fill.setTextSize(size);
+            while (fill.measureText(time) > getWidth() * 0.92f && size > 40f) {
+                size *= 0.96f;
+                fill.setTextSize(size);
+            }
+            stroke.setTextSize(size);
+            float y = getHeight() / 2f - (fill.descent() + fill.ascent()) / 2f;
+            frost.setTextSize(size);
+            canvas.drawText(time, getWidth() / 2f, y, frost);
+            if (glass != null) {
+                BitmapShader shader = new BitmapShader(glass, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
+                matrix.setScale(getWidth() / (float) glass.getWidth(), getHeight() / (float) glass.getHeight());
+                shader.setLocalMatrix(matrix);
+                fill.setShader(shader);
+                canvas.drawText(time, getWidth() / 2f, y, fill);
+            }
+            canvas.drawText(time, getWidth() / 2f, y, stroke);
+        }
+    }
+}

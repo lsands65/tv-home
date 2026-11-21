@@ -13,6 +13,8 @@ import android.content.SharedPreferences;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.content.pm.ApplicationInfo;
+
+import java.lang.ref.WeakReference;
 import android.content.pm.ResolveInfo;
 import android.content.pm.ChangedPackages;
 import android.content.res.ColorStateList;
@@ -60,6 +62,7 @@ import android.view.SoundEffectConstants;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
 import android.view.Window;
+import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.AnimationUtils;
 import android.view.animation.LayoutAnimationController;
 import android.widget.FrameLayout;
@@ -103,6 +106,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     static final String ACTION_VIEW_INPUTS = "com.android.tv.action.VIEW_INPUTS";
     /** Tiles per row and dock slots (res/values/config.xml, columns). Set in onCreate. */
     static int COLUMNS = 4;
+    /** The Home on screen, so the aerial can black it out before covering it. */
+    private static WeakReference<MainActivity> shown;
     private boolean rtlAppGrid;
     private static final long MINUTE_MS = 60_000L;
     private static final long STATS_MS = 10_000L;
@@ -137,6 +142,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private GlassView glass;
     private View ambient;
     private TextView heroName;
+    private RecRow recs;
+    private Scenic scenic;
+    /** When Back was last pressed, so a second press at home starts the screensaver. */
+    private long backAt;
+    private static final long BACK_AGAIN_MS = 2000;
     /** The top shelf: heroName, plus the cinematic shelf's "Last opened" line and dock position dots. */
     private View hero;
     private TextView heroMeta;
@@ -409,6 +419,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         coocaaSources = cfg.coocaaSources;
 
         root = findViewById(R.id.root);
+        recs = new RecRow(this, new RecRow.Host() {
+            @Override public void focusDock() { focusTile(Math.max(0, lastFocused)); }
+            @Override public void focusTop() {
+                View bar = findViewById(R.id.topButtons);
+                if (bar.getVisibility() != View.VISIBLE) return;
+                firstTopButton().requestFocus();
+            }
+            @Override public void onRowVisibility(boolean shown) {
+                if (scenic != null) scenic.placeKeep();
+            }
+        });
+        root.addView(recs, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT));
+        recs.start();
         root.setBackgroundColor(cfg.backgroundColor);
         // root fills the window with an opaque colour (Config keeps background_color opaque), so the window's own
         // black under it is a second full-screen fill on every frame for nothing. The starting window still uses
@@ -564,7 +588,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         });
         if (dockRow) grid.addItemDecoration(new DockDecoration(COLUMNS, density, cinematic, cfg.alwaysShowNames, cfg.dockOpacity, cfg.dockGlass, cfg.dockEvenPadding,
-                singleRow, cfg.dockBandAll));
+                singleRow, cfg.dockBandAll, Config.scenic(this)));
         if (cfg.fadeRows) TopFade.attach(grid, 48 * density);
         // Reduced motion: the tiles are simply there, with no entrance (reloadApps skips it there too).
         if (animations && !reducedMotion) {
@@ -583,6 +607,51 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         int rowsBelowDock = cfg.rowsBelowDock;
         grid.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> {
             int h = b - t;
+            if (Config.scenic(this)) {
+                int count = Math.max(1, adapter.appCount());
+                GridLayoutManager manager = (GridLayoutManager) grid.getLayoutManager();
+                if (manager.getSpanCount() != count) manager.setSpanCount(count);
+                int inset = Math.round(12 * density);
+                int gap = Math.round(8 * density);
+                int preferred = Math.round(64 * density);
+                int maxW = Math.min((r - l) - Math.round(64 * density), Math.round(680 * density));
+                int budget = maxW - inset * 2;
+                int gaps = Math.max(0, count - 1) * gap;
+                int icon = preferred;
+                if (count * icon + gaps > budget) {
+                    gap = Math.round(8 * density);
+                    gaps = Math.max(0, count - 1) * gap;
+                    icon = Math.max(Math.round(40 * density), (budget - gaps) / count);
+                }
+                int cell = icon + gap;
+                int rowW = count * cell;
+                int padX = Math.max(0, ((r - l) - rowW) / 2);
+                // Decoration top, item padding, the tile, item padding, decoration bottom that hides the next row.
+                int rowH = icon + Math.round((6 + 6 + 6 + 28) * density);
+                int wantTop = Math.max(0, h - rowH + Math.round(16 * density));
+                if (grid.getPaddingTop() != wantTop || grid.getPaddingLeft() != padX || grid.getPaddingBottom() != 0) {
+                    grid.setPadding(padX, wantTop, padX, 0);
+                }
+                int iconPx = icon;
+                if (adapter.scenicIconPx() != iconPx) {
+                    adapter.setScenicIconPx(iconPx);
+                    for (int i = 0; i < grid.getChildCount(); i++) {
+                        View card = grid.getChildAt(i).findViewById(R.id.card);
+                        if (card == null) continue;
+                        ViewGroup.LayoutParams cardLp = card.getLayoutParams();
+                        if (cardLp.width == iconPx && cardLp.height == iconPx) continue;
+                        cardLp.width = cardLp.height = iconPx;
+                        card.requestLayout();
+                    }
+                }
+                int packedIcon = icon;
+                int packedGap = gap;
+                grid.post(() -> {
+                    packScenicDock(packedIcon, packedGap);
+                    refitGlass();
+                });
+                return;
+            }
             // Item height follows the tile size, which follows the columns and the rows that must fit (AppAdapter.tileWidthPx).
             int inner = (r - l) - grid.getPaddingLeft() - grid.getPaddingRight();
             int tileW = AppAdapter.tileWidthPx(inner, h, COLUMNS, rowsBelowDock, cfg.dockTitle, cfg.dockRow, density);
@@ -601,6 +670,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // A single row never shows the names under its tiles (the title above the row names the app), so the
             // 7dp gap and 22dp label item_app.xml keeps for them would only lift the row: sit it that much lower.
             if (singleRow && !cfg.alwaysShowNames) want += (int) (29 * density);
+            if (want < 0) want = 0;
             if (grid.getPaddingTop() != want) {
                 grid.setPadding(grid.getPaddingLeft(), want, grid.getPaddingRight(), grid.getPaddingBottom());
                 // A vertical grid parks the dock on the new padding line by scrolling (onTileFocused); a sideways
@@ -782,6 +852,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         }
         if (festive) applyFestiveSkin((TextView) btnInputs, (TextView) btnSettings);
+        quietPills(btnInputs, btnWifi, findViewById(R.id.btnSettings));
+        scenic = Scenic.attach(this, root, grid, recs, glass,
+                () -> openPopup == null && cardPrompt == null && !reordering);
 
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
@@ -908,6 +981,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onResume() {
         super.onResume();
+        shown = new WeakReference<>(this);
         // A festival that started or ended while Home was in the background: rebuild with or without it.
         if (festive != festival.active(LocalDate.now())) {
             recreate();
@@ -920,7 +994,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             recreate();
             return;
         }
+        fadeInFromAerial();
+        if (scenic != null) scenic.resume();
         restartIdleClock();
+        recs.reload();
         promptsPaused = false;
         if (grid.getAdapter() == null) grid.setAdapter(adapter);   // dropped by onTrimMemory
         switch (tileRefresh.onResume(packagesChangedSinceRebuild())) {
@@ -1111,6 +1188,28 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         restartIdleClock();
     }
 
+    /** The aerial faded to black and just closed. Bring the home screen up out of that black. */
+    private void fadeInFromAerial() {
+        View decor = getWindow().getDecorView();
+        long woke = AerialDream.wokeAt;
+        if (woke != 0 && SystemClock.uptimeMillis() - woke <= 2000) {
+            AerialDream.wokeAt = 0;
+            decor.setAlpha(0f);
+            decor.animate().alpha(1f).setDuration(AerialDream.FADE_MS)
+                    .setInterpolator(new AccelerateDecelerateInterpolator())
+                    .start();
+        } else if (decor.getAlpha() < 1f) {
+            decor.setAlpha(1f);
+        }
+    }
+
+    /** Called when the aerial covers Home, so the screen underneath is already black. */
+    static void prepareForAerial() {
+        MainActivity activity = shown == null ? null : shown.get();
+        if (activity == null || activity.isDestroyed()) return;
+        activity.getWindow().getDecorView().setAlpha(0f);
+    }
+
     private void restartIdleClock() {
         root.removeCallbacks(showIdleClock);
         if (idleClockMs > 0) root.postDelayed(showIdleClock, idleClockMs);
@@ -1120,6 +1219,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     protected void onPause() {
         super.onPause();
         root.removeCallbacks(showIdleClock);
+        if (scenic != null) scenic.pause();
         endReorder();   // Home or another app while reordering keeps the order so far
         wallpaperPlayer.stop();
         stopAmbientAnimation();
@@ -1190,6 +1290,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             cm.unregisterNetworkCallback(networkCallback);
             cm.unregisterNetworkCallback(vpnCallback);
         }
+        recs.close();
+        if (scenic != null) scenic.destroy();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RecRow.PERMISSION_REQUEST) recs.reload();
     }
 
     /**
@@ -1225,6 +1333,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (handleSettingsKey(event)) return true;
+        if (scenic != null && scenic.onKey(event)) return true;
+        if (scenic != null && !reordering && openPopup == null && cardPrompt == null
+                && screensaverBack(event)) return true;
         if (tileMenuEnabled && !reordering && openPopup == null && cardPrompt == null
                 && event.getKeyCode() == KeyEvent.KEYCODE_MENU) {
             int position = focusedTilePosition();
@@ -1287,6 +1398,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         View f = getCurrentFocus();
         if (f == null || f.getId() != R.id.card || !(f.getParent() instanceof View)) return -1;
         return grid.getChildAdapterPosition((View) f.getParent());
+    }
+
+    /** Inputs, network and Settings stay faded until one of them has focus. */
+    private void quietPills(View... pills) {
+        for (View pill : pills) {
+            if (pill == null) continue;
+            pill.setAlpha(pill.hasFocus() ? 1f : 0.45f);
+            View.OnFocusChangeListener previous = pill.getOnFocusChangeListener();
+            pill.setOnFocusChangeListener((view, focused) -> {
+                if (previous != null) previous.onFocusChange(view, focused);
+                view.animate().alpha(focused ? 1f : 0.45f).setDuration(160)
+                        .setInterpolator(new android.view.animation.DecelerateInterpolator()).start();
+            });
+        }
     }
 
     /** The reorder button: turns the mode on (focus goes back to the last tile), or off again. */
@@ -1549,9 +1674,28 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         });
     }
 
+    /** Back twice within two seconds starts the scenic screensaver. A single Back still goes nowhere. */
+    private boolean screensaverBack(KeyEvent event) {
+        int code = event.getKeyCode();
+        boolean back = code == KeyEvent.KEYCODE_BACK || code == KeyEvent.KEYCODE_ESCAPE;
+        if (!back) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) backAt = 0;
+            return false;
+        }
+        if (event.getAction() != KeyEvent.ACTION_DOWN || event.getRepeatCount() != 0) return true;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (backAt != 0 && now - backAt <= BACK_AGAIN_MS) {
+            backAt = 0;
+            scenic.startNow();
+        } else {
+            backAt = now;
+        }
+        return true;
+    }
+
     @Override
     public void onBackPressed() {
-        // Home screen: Back goes nowhere.
+        // Home screen: Back goes nowhere. A second press is handled in dispatchKeyEvent.
     }
 
     // ---- glass highlight -------------------------------------------------------------------------
@@ -1580,6 +1724,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     @Override
+    public void onMoreApps() {
+        if (openPopup != null) openPopup.dismiss();
+        MoreApps folder = new MoreApps(this, () -> {
+            openPopup = null;
+            int pos = adapter.positionOf(getPackageName() + "/more-apps");
+            if (pos >= 0) focusTile(pos);
+        });
+        openPopup = folder.popup;
+        folder.show();
+    }
+
+    @Override
     public void onTileFocused(int position, View card) {
         lastFocused = position;
         lastFocusedKey = adapter.keyAt(position);
@@ -1595,6 +1751,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         Rect r = tileRect;
         r.set(0, 0, card.getWidth(), card.getHeight());
         root.offsetDescendantRectToMyCoords(card, r);
+        // The scenic dock slides the whole cell together. The layout position does not include that shift.
+        if (card.getParent() instanceof View) {
+            View cell = (View) card.getParent();
+            r.offset(Math.round(cell.getTranslationX()), Math.round(cell.getTranslationY()));
+        }
         float pad = 6f * density;        // matches GlassView's glow inset
         float scale = adapter.focusScale();
         float w = card.getWidth() * scale + 2 * pad;
@@ -1663,6 +1824,25 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     /** Refits the glass to the focused holder once the grid layout and tile dimensions settle. */
+    /** Pulls the scenic dock icons into one cluster. The grid columns stay wide; the tiles slide together. */
+    private void packScenicDock(int icon, int gap) {
+        int count = adapter.appCount();
+        if (count <= 0 || grid.getWidth() <= 0) return;
+        int pitch = icon + gap;
+        int row = count * icon + Math.max(0, count - 1) * gap;
+        int start = (grid.getWidth() - row) / 2;
+        for (int i = 0; i < grid.getChildCount(); i++) {
+            View child = grid.getChildAt(i);
+            int pos = grid.getChildAdapterPosition(child);
+            if (pos < 0 || pos >= count) continue;
+            View card = child.findViewById(R.id.card);
+            int cardLeft = card == null ? Math.max(0, (child.getWidth() - icon) / 2) : card.getLeft();
+            int current = child.getLeft() + cardLeft;
+            int target = start + pos * pitch;
+            child.setTranslationX(target - current);
+        }
+    }
+
     private void refitGlass() {
         if (isDestroyed() || adapter.appCount() == 0 || libraryFocusPending) return;
         int pos = Math.max(0, Math.min(lastFocused, adapter.appCount() - 1));
@@ -1671,9 +1851,20 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         if (card == null || card.getWidth() <= 0 || !card.isFocused()) return;
         float pad = 6f * density;
         float scale = adapter.focusScale();
-        int w = (int) (card.getWidth() * scale + 2 * pad);
-        int h = (int) (card.getHeight() * scale + 2 * pad);
-        if (!glassShown || card.getWidth() != glassCardW || glass.getWidth() != w || glass.getHeight() != h) {
+        float w = card.getWidth() * scale + 2 * pad;
+        float h = card.getHeight() * scale + 2 * pad;
+        Rect r = tileRect;
+        r.set(0, 0, card.getWidth(), card.getHeight());
+        root.offsetDescendantRectToMyCoords(card, r);
+        // The scenic dock slides the whole cell together. The layout position does not include that shift.
+        if (card.getParent() instanceof View) {
+            View cell = (View) card.getParent();
+            r.offset(Math.round(cell.getTranslationX()), Math.round(cell.getTranslationY()));
+        }
+        float x = r.exactCenterX() - w / 2f;
+        float y = r.exactCenterY() - h / 2f;
+        if (!glassShown || card.getWidth() != glassCardW || Math.abs(glass.getTranslationX() - x) > 1f
+                || Math.abs(glass.getTranslationY() - y) > 1f || glass.getWidth() != (int) w || glass.getHeight() != (int) h) {
             onTileFocused(pos, card);
         }
     }
@@ -1683,7 +1874,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void showHero(int position, float dockTopInRoot) {
         String label = adapter.labelAt(position);
         int color = adapter.ambientColorAt(position);
-        float y = dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
+        float y = Config.scenic(this)
+                ? dockTopInRoot - 8 * density
+                : dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
         boolean changed = !label.contentEquals(heroName.getText());
         if (cinematic && heroArtAlpha > 0f) showHeroArt(position);
 
@@ -1736,6 +1929,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         } else {
             hero.setY(y);
         }
+        recs.show(adapter.packageAt(position), label, y);
     }
 
     /** The shelf's text for this dock app: its name and, on the cinematic shelf, "Last opened" and the dots. */
@@ -1951,6 +2145,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * name above the dock does not show (every grid tile has its name underneath).
      */
     private void showGlowOnly(int position) {
+        // The recommendation row sits above the dock. It leaves with the dock's name when focus moves
+        // into the apps below.
+        recs.hide();
         int color = adapter.ambientColorAt(position);
         stopAmbientAnimation();
         hero.animate().cancel();
@@ -1992,6 +2189,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             ambient.setAlpha(0f);
             heroArt.setAlpha(0f);
         }
+        recs.hide();
     }
 
     private void hideGlass() {
@@ -2224,7 +2422,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     rtlAppGrid, keyCode == KeyEvent.KEYCODE_DPAD_LEFT);
         }
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-            if (position < COLUMNS) return false;          // dock row: let focus move to the top bar
+            if (position < COLUMNS) {
+                if (recs.focus()) {
+                    grid.playSoundEffect(SoundEffectConstants.NAVIGATION_UP);
+                    return true;
+                }
+                if (findViewById(R.id.topButtons).getVisibility() != View.VISIBLE) return true;
+                return false;                              // no row for this app: Up still reaches the top bar
+            }
             target = position - COLUMNS;
         } else {
             int lastRowStart = ((count - 1) / COLUMNS) * COLUMNS;
