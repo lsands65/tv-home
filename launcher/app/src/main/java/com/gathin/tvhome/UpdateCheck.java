@@ -38,7 +38,8 @@ final class UpdateCheck {
 
     private static final String TAG = "TvHome";
     private static final String PREFS = "updates";
-    private static final long INTERVAL_MS = 12 * 60 * 60 * 1000L;
+    /** One look per process. Returning to Home does not ask GitHub again. */
+    private static final AtomicBoolean LOOKED = new AtomicBoolean(false);
     private static final AtomicBoolean BUSY = new AtomicBoolean(false);
     private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
         Thread thread = new Thread(r, "update");
@@ -50,11 +51,13 @@ final class UpdateCheck {
 
     private UpdateCheck() { }
 
-    /** Asks GitHub when the last look was old enough, then shows a newer release. */
+    /**
+     * Shows an update already found. The first time Home appears in this process, asks GitHub.
+     * Later returns to Home do not ask again.
+     */
     static void onHomeResumed(Activity activity) {
         present(activity);
-        long checked = activity.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong("checked", 0);
-        if (System.currentTimeMillis() - checked < INTERVAL_MS) return;
+        if (!LOOKED.compareAndSet(false, true)) return;
         if (!BUSY.compareAndSet(false, true)) return;
         IO.execute(() -> {
             try {

@@ -82,7 +82,7 @@ final class Scenic {
 
     private ImageView photoA, photoB, fgA, fgB, artA, artB;
     private GlassClock clock;
-    private TextView date, keep;
+    private TextView date, keep, who;
     private View scrim, topButtons;
     private TextureView aerialView;
     private TextView aerialLabel;
@@ -211,6 +211,31 @@ final class Scenic {
         dateLp.topMargin = Math.round(28 * density());
         root.addView(date, root.indexOfChild(glass), dateLp);
 
+        who = new TextView(activity);
+        who.setTextColor(0xF2FFFFFF);
+        who.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18);
+        who.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
+        who.setFocusable(true);
+        who.setClickable(true);
+        who.setVisibility(View.GONE);
+        int whoPad = Math.round(14 * density());
+        who.setPadding(whoPad, Math.round(8 * density()), whoPad, Math.round(8 * density()));
+        who.setOnClickListener(v -> onWho());
+        who.setOnFocusChangeListener((v, focused) -> paintWho(focused));
+        who.setOnKeyListener((v, code, event) -> {
+            if (event.getAction() != KeyEvent.ACTION_DOWN || code != KeyEvent.KEYCODE_DPAD_DOWN) return false;
+            if (activity instanceof MainActivity && ((MainActivity) activity).focusPeopleDown()) return true;
+            if (recs instanceof RecRow && ((RecRow) recs).focus()) return true;
+            grid.requestFocus();
+            return true;
+        });
+        FrameLayout.LayoutParams whoLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.START);
+        whoLp.topMargin = Math.round(22 * density());
+        whoLp.setMarginStart(Math.round(48 * density()));
+        root.addView(who, whoLp);
+
         keep = new TextView(activity);
         keep.setText("Keep watching");
         keep.setTextColor(0xE6FFFFFF);
@@ -221,8 +246,9 @@ final class Scenic {
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT));
         recs.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) -> placeKeep());
 
-        fadeViews = new View[] {date, topButtons, clock, scrim, keep, recs, grid, glass};
-        topViews = new View[] {date, topButtons, clock};
+        fadeViews = new View[] {date, who, topButtons, clock, scrim, keep, recs, grid, glass};
+        topViews = new View[] {date, who, topButtons, clock};
+        refreshWho();
         bottomViews = new View[] {keep, recs, grid, glass};
 
         photoB.setAlpha(0f);
@@ -241,6 +267,63 @@ final class Scenic {
         tickClock();
         restartTimer();
         scheduleScene();
+        refreshWho();
+    }
+
+    /** Up from Keep watching. True when the name took focus. */
+    boolean focusWho() {
+        if (who == null || who.getVisibility() != View.VISIBLE) return false;
+        who.requestFocus();
+        return true;
+    }
+
+    void refreshWho() {
+        if (who == null) return;
+        People.Person person = People.current(activity);
+        if (!People.several(activity) || person == null) {
+            who.setVisibility(View.GONE);
+            return;
+        }
+        who.setText(person.name);
+        who.setVisibility(View.VISIBLE);
+        paintWho(who.isFocused());
+    }
+
+    private void paintWho(boolean focused) {
+        who.setTextColor(focused ? 0xFF14181E : 0xF2FFFFFF);
+        android.graphics.drawable.GradientDrawable plate = new android.graphics.drawable.GradientDrawable();
+        plate.setCornerRadius(14 * density());
+        plate.setColor(focused ? 0xFFFFFFFF : 0x00000000);
+        who.setBackground(plate);
+    }
+
+    private void onWho() {
+        People.Person person = People.current(activity);
+        if (person != null && person.kid()) {
+            People.askPin(activity, person.pin, () -> {
+                People.leaveKid(activity);
+                refreshWho();
+                if (activity instanceof MainActivity) ((MainActivity) activity).applyPeople();
+            });
+            return;
+        }
+        if (People.list(activity).size() >= 3) {
+            String[] names = new String[People.list(activity).size()];
+            java.util.List<People.Person> people = People.list(activity);
+            for (int i = 0; i < people.size(); i++) names[i] = people.get(i).name;
+            new android.app.AlertDialog.Builder(activity)
+                    .setTitle(R.string.people)
+                    .setItems(names, (d, which) -> {
+                        People.select(activity, people.get(which).id);
+                        refreshWho();
+                        if (activity instanceof MainActivity) ((MainActivity) activity).applyPeople();
+                    })
+                    .show();
+            return;
+        }
+        People.cycle(activity);
+        refreshWho();
+        if (activity instanceof MainActivity) ((MainActivity) activity).applyPeople();
     }
 
     void pause() {
@@ -441,10 +524,24 @@ final class Scenic {
         return !"water".equals(name);
     }
 
+    /** Horizontal rest position. setX() stores this in translationX, which the slide also uses. */
+    private float keepRestX;
+    /** Slide offset added on top of {@link #keepRestX}. */
+    private float keepShift;
+
+    /** Keep watching's label rides with the row while a new shelf slides in. */
+    void shiftKeep(float translationX, float alpha) {
+        keepShift = translationX;
+        keep.setAlpha(alpha);
+        keep.setTranslationX(keepRestX + keepShift);
+    }
+
     void placeKeep() {
         if (idle) return;
         if (recs.getVisibility() != View.VISIBLE || recs.getHeight() == 0) {
             keep.setVisibility(View.INVISIBLE);
+            keep.setAlpha(1f);
+            keepShift = 0f;
             return;
         }
         keep.setVisibility(View.VISIBLE);
@@ -452,8 +549,11 @@ final class Scenic {
             keep.post(this::placeKeep);
             return;
         }
-        keep.setX(recs.getPaddingLeft());
-        // Layout position, so the idle slide (translation) does not get baked into the label.
+        // The slide adds keepShift on top of this. Writing the whole offset into translationX
+        // left the label on the screen edge once the slide finished at 0.
+        keepRestX = recs.getPaddingLeft() - keep.getLeft();
+        keep.setTranslationX(keepRestX + keepShift);
+        // Vertical position is a margin, so the idle slide (translationY) does not get baked in.
         int y = Math.round(recs.getTop() - keep.getHeight() - 8 * density());
         FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) keep.getLayoutParams();
         if (lp.topMargin != y) {

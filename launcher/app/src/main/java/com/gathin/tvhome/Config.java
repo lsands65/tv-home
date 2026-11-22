@@ -488,6 +488,12 @@ final class Config {
     private static JSONObject themeCached;
     private static boolean themeLoaded;
 
+    /** Theme key people: the names to start from, until someone edits them on the TV. */
+    static org.json.JSONArray themePeople(Context ctx) {
+        JSONObject json = theme(ctx);
+        return json == null ? null : json.optJSONArray("people");
+    }
+
     private static JSONObject theme(Context ctx) {
         if (themeLoaded) return themeCached;
         themeLoaded = true;

@@ -144,6 +144,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView heroName;
     private RecRow recs;
     private Scenic scenic;
+    private KidsHome kids;
     /** When Back was last pressed, so a second press at home starts the screensaver. */
     private long backAt;
     private static final long BACK_AGAIN_MS = 2000;
@@ -422,12 +423,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         recs = new RecRow(this, new RecRow.Host() {
             @Override public void focusDock() { focusTile(Math.max(0, lastFocused)); }
             @Override public void focusTop() {
+                if (scenic != null && scenic.focusWho()) return;
                 View bar = findViewById(R.id.topButtons);
                 if (bar.getVisibility() != View.VISIBLE) return;
                 firstTopButton().requestFocus();
             }
             @Override public void onRowVisibility(boolean shown) {
                 if (scenic != null) scenic.placeKeep();
+            }
+            @Override public void onShelfShift(float translationX, float alpha) {
+                if (scenic != null) scenic.shiftKeep(translationX, alpha);
             }
         });
         root.addView(recs, new FrameLayout.LayoutParams(
@@ -855,6 +860,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         quietPills(btnInputs, btnWifi, findViewById(R.id.btnSettings));
         scenic = Scenic.attach(this, root, grid, recs, glass,
                 () -> openPopup == null && cardPrompt == null && !reordering);
+        kids = new KidsHome(this, root, grid, recs);
 
         // Hide the glass when focus leaves the tiles.
         getWindow().getDecorView().getViewTreeObserver().addOnGlobalFocusChangeListener((oldF, newF) -> {
@@ -1040,6 +1046,19 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         }
         UpdateCheck.onHomeResumed(this);
+        applyPeople();
+    }
+
+    /** Shows the kid's shelf, or the dock, for whoever is watching. */
+    void applyPeople() {
+        if (kids != null) kids.apply();
+        if (scenic != null) scenic.refreshWho();
+    }
+
+    boolean focusPeopleDown() {
+        if (kids == null || !kids.blocking()) return false;
+        kids.focus();
+        return true;
     }
 
     /** The painting or aerial is up, so an update prompt waits. */
@@ -1343,6 +1362,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      */
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        if (kids != null && kids.blocking()) {
+            for (int code : settingsKeycodes) if (event.getKeyCode() == code) return true;
+        }
         if (handleSettingsKey(event)) return true;
         if (scenic != null && scenic.onKey(event)) return true;
         if (scenic != null && !reordering && openPopup == null && cardPrompt == null
@@ -1882,6 +1904,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     // ---- top shelf -------------------------------------------------------------------------------
 
+    /** Dock slot whose Keep watching row is on screen, so the next row knows which side to enter from. */
+    private int shelfIndex = -1;
+
     private void showHero(int position, float dockTopInRoot) {
         String label = adapter.labelAt(position);
         int color = adapter.ambientColorAt(position);
@@ -1889,6 +1914,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 ? dockTopInRoot - 8 * density
                 : dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
         boolean changed = !label.contentEquals(heroName.getText());
+        int direction = 0;
+        if (shelfIndex >= 0 && position != shelfIndex) direction = position > shelfIndex ? 1 : -1;
+        shelfIndex = position;
         if (cinematic && heroArtAlpha > 0f) showHeroArt(position);
 
         if (!animations || reducedMotion) {
@@ -1905,6 +1933,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 ambient.setAlpha(1f);
             }
             heroShown = true;
+            recs.show(adapter.packageAt(position), label, y, 0);
             return;
         }
 
@@ -1940,7 +1969,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         } else {
             hero.setY(y);
         }
-        recs.show(adapter.packageAt(position), label, y);
+        recs.show(adapter.packageAt(position), label, y, direction);
     }
 
     /** The shelf's text for this dock app: its name and, on the cinematic shelf, "Last opened" and the dots. */

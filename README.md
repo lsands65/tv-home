@@ -61,12 +61,13 @@ another house before pushing it. The guide address is not part of this repo.
 
 ## Updates
 
-Home asks GitHub, at most every 12 hours, for the latest release of this repo. The tag is the
-version code (`v9`) and the release includes the APK. A newer tag opens a prompt. The TV still
-asks before it replaces Home.
+When the launcher starts, it asks GitHub once for the latest release of this repo. Coming
+back to Home does not ask again. The tag is the version code (`v9`) and the release includes
+the APK. A newer tag opens a prompt. The TV still asks before it replaces Home.
 
-Because this repo is private, the TV needs a token that can read it. Put that token alone in
-`update-token` next to the theme on the TV, or set `update_token` in the theme. Do not commit it.
+The repo is public, so the TV needs no token. A theme that points `update_repo` at a private
+repo can put a read token alone in `update-token` next to the theme, or set `update_token`.
+Do not commit it.
 
 ```powershell
 gh release create v9 app\build\outputs\apk\release\app-release.apk --repo lsands65/tv-home --title "2.8"

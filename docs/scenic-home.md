@@ -98,6 +98,9 @@ columns, and the launcher slides the icons together after layout (about 64dp ico
 
 ## Keep watching
 
+Moving the dock left or right slides that app's cards in from the side focus moved toward.
+The "Keep watching" label stays over the cards. The first app to take focus does not slide.
+An app with no row lets the previous cards keep going and fade out.
 Cards come from Android's Watch Next and preview programs (`READ_TV_LISTINGS`). The scenic card
 reads `season_display_number`, `episode_display_number`, and `episode_title`, and draws
 `last_playback_position_millis / duration_millis` as the bar. No position or no duration leaves
@@ -173,18 +176,31 @@ shipped here at 1920x1080. Couch TV's note is that they are not real places and 
 however you like: `couch-tv` `tv-home/web/backgrounds/CREDITS.md`. The `@2x` upscales are not
 bundled. Scenes change about every 20 seconds and crossfade for 1.6 seconds.
 
+## People
+
+More apps has People. One person, or none, leaves the home as it is. Two or more put the
+current name at the top left. OK switches, and with three or more it opens the list. Keep
+watching then keeps what that person has actually moved through: opening a card claims it, and
+a show whose progress changes while they were in an app is claimed when Home comes back.
+Anything nobody has claimed yet still shows, so there is a card to open. A guest's shows stay
+on that guest's row.
+
+A kid replaces the dock with the shows a parent added, and Grown-ups asks for the PIN. The
+switch does not sign anyone into an app. Netflix and Jellyfin keep their own accounts.
+
 ## Updates
 
-On each return to Home, and at most every 12 hours, the launcher asks GitHub for the latest
-release of `lsands65/tv-home` (a theme can set `update_repo` to another `owner/name`). The
-release tag is the version code, such as `v9`, and one of the files is the APK. A higher tag
-than the installed build opens a prompt. Install downloads it and hands it to the TV, which
-still asks before replacing Home. Not now hides that version until a newer one exists.
+When the launcher process starts, it asks GitHub once for the latest release of
+`lsands65/tv-home` (a theme can set `update_repo` to another `owner/name`). Coming back to
+Home does not ask again. The release tag is the version code, such as `v9`, and one of the
+files is the APK. A higher tag than the installed build opens a prompt. Install downloads it
+and hands it to the TV, which still asks before replacing Home. Not now hides that version
+until a newer one exists.
 
-The repo is private, so the request needs a token that can read it. Put that token, and nothing
-else, in `update-token` next to the theme file on the TV
+The repo is public, so the request needs no token. A private `update_repo` needs a token that
+can read it, and nothing else, in `update-token` next to the theme file on the TV
 (`/sdcard/Android/data/com.gathin.tvhome/files/update-token`), or in the theme as `update_token`.
-A public repo needs neither. Do not commit the token.
+Do not commit the token.
 
 ```powershell
 gh release create v9 app\build\outputs\apk\release\app-release.apk --repo lsands65/tv-home --title "2.8"

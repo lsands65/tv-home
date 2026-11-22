@@ -1,5 +1,8 @@
 package com.gathin.tvhome;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
@@ -19,6 +22,7 @@ import android.util.LruCache;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.animation.DecelerateInterpolator;
 import android.view.SoundEffectConstants;
 import android.view.View;
 import android.view.ViewOutlineProvider;
@@ -53,6 +57,8 @@ final class RecRow extends LinearLayout {
         void focusTop();
         /** The row gained or lost cards. The label is not a child of this view, so the host hides it. */
         void onRowVisibility(boolean shown);
+        /** The row is sliding. The label is a sibling, so the host moves and fades it with the cards. */
+        void onShelfShift(float translationX, float alpha);
     }
 
     private final Activity activity;
@@ -84,6 +90,9 @@ final class RecRow extends LinearLayout {
     private float heroTop;
     private boolean observing;
     private int generation;
+    private int pendingDirection;
+    private int slideGeneration;
+    private ValueAnimator shelfSlide;
 
     RecRow(Activity activity, Host host) {
         super(activity);
@@ -118,13 +127,18 @@ final class RecRow extends LinearLayout {
             handler.post(() -> {
                 if (ticket != generation || activity.isDestroyed()) return;
                 programs = loaded;
+                People.notice(activity, loaded);
                 if (shownPackage != null) bind(shownPackage, shownLabel);
             });
         });
     }
 
-    /** Puts this app's row just above the dock name. Hides the row when the app has published nothing. */
-    void show(String pkg, String label, float heroTop) {
+    /**
+     * Puts this app's row just above the dock name. Hides the row when the app has published nothing.
+     * {@code direction} is 1 when focus moved right and -1 when it moved left, so the new cards
+     * arrive from that side. 0 leaves them where they are.
+     */
+    void show(String pkg, String label, float heroTop, int direction) {
         this.heroTop = heroTop;
         boolean same = pkg != null && pkg.equals(shownPackage);
         shownPackage = pkg;
@@ -133,11 +147,16 @@ final class RecRow extends LinearLayout {
             place();
             return;
         }
+        pendingDirection = direction;
         bind(pkg, label);
     }
 
     void hide() {
         shownPackage = null;
+        cancelSlide();
+        setTranslationX(0f);
+        setAlpha(1f);
+        host.onShelfShift(0f, 1f);
         setVisibility(GONE);
         host.onRowVisibility(false);
     }
@@ -169,18 +188,104 @@ final class RecRow extends LinearLayout {
     }
 
     private void bind(String pkg, String label) {
-        List<Recommendations.Card> list = pkg == null ? null : programs.get(pkg);
-        removeAllViews();
-        if (list == null || list.isEmpty()) {
+        People.Person watching = People.current(activity);
+        if (watching != null && watching.kid() && People.several(activity)) {
+            pendingDirection = 0;
+            cancelSlide();
+            removeAllViews();
+            setTranslationX(0f);
+            setAlpha(1f);
+            host.onShelfShift(0f, 1f);
             setVisibility(GONE);
             host.onRowVisibility(false);
             return;
         }
+        List<Recommendations.Card> list = pkg == null ? null : programs.get(pkg);
+        if (People.several(activity)) list = People.showing(activity, pkg, list);
+        int direction = pendingDirection;
+        pendingDirection = 0;
+        if (list == null || list.isEmpty()) {
+            if (getVisibility() == VISIBLE && direction != 0 && getChildCount() > 0) {
+                // The new app has nothing to show. The cards keep traveling the way they entered
+                // and fade out, instead of sliding back toward the app that was just focused.
+                slide(-direction * travel(), 0f, () -> {
+                    removeAllViews();
+                    setTranslationX(0f);
+                    setAlpha(1f);
+                    host.onShelfShift(0f, 1f);
+                    setVisibility(GONE);
+                    host.onRowVisibility(false);
+                });
+                return;
+            }
+            cancelSlide();
+            removeAllViews();
+            setTranslationX(0f);
+            setAlpha(1f);
+            host.onShelfShift(0f, 1f);
+            setVisibility(GONE);
+            host.onRowVisibility(false);
+            return;
+        }
+        cancelSlide();
+        removeAllViews();
         int count = Math.min(scenic ? 3 : MAX_CARDS, list.size());
         for (int i = 0; i < count; i++) addView(card(list.get(i), pkg, i, count));
         setVisibility(VISIBLE);
+        setAlpha(1f);
         place();
         host.onRowVisibility(true);
+        float from = direction * travel();
+        setTranslationX(from);
+        host.onShelfShift(from, 1f);
+        if (direction != 0) slide(0f, 1f, null);
+    }
+
+    /** How far a new shelf travels. Far enough to read as a slide, short enough to finish between clicks. */
+    private float travel() {
+        return 96f * density;
+    }
+
+    /** Moves the row, and the label with it, from where it is to {@code toX}, fading toward {@code toAlpha}. */
+    private void slide(float toX, float toAlpha, Runnable after) {
+        int ticket = ++slideGeneration;
+        if (shelfSlide != null) shelfSlide.cancel();
+        float fromX = getTranslationX();
+        float fromAlpha = getAlpha();
+        if (Math.abs(toX - fromX) < 0.5f && Math.abs(toAlpha - fromAlpha) < 0.01f) {
+            setTranslationX(toX);
+            setAlpha(toAlpha);
+            host.onShelfShift(toX, toAlpha);
+            if (after != null) after.run();
+            return;
+        }
+        ValueAnimator animator = ValueAnimator.ofFloat(0f, 1f);
+        animator.setDuration(300);
+        animator.setInterpolator(new DecelerateInterpolator());
+        animator.addUpdateListener(animation -> {
+            float t = (float) animation.getAnimatedValue();
+            float x = fromX + (toX - fromX) * t;
+            float alpha = fromAlpha + (toAlpha - fromAlpha) * t;
+            setTranslationX(x);
+            setAlpha(alpha);
+            host.onShelfShift(x, alpha);
+        });
+        animator.addListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationEnd(Animator animation) {
+                if (ticket != slideGeneration || after == null) return;
+                after.run();
+            }
+        });
+        shelfSlide = animator;
+        animator.start();
+    }
+
+    private void cancelSlide() {
+        slideGeneration++;
+        if (shelfSlide != null) {
+            shelfSlide.cancel();
+            shelfSlide = null;
+        }
     }
 
     private void place() {
@@ -282,7 +387,7 @@ final class RecRow extends LinearLayout {
             glass.setStroke(focused ? Math.max(2, Math.round(2 * density)) : 0, 0xFFFFFFFF);
             card.invalidate();
         });
-        card.setOnClickListener(v -> open(item.intentUri, pkg));
+        card.setOnClickListener(v -> open(item, pkg));
         card.setOnKeyListener((v, keyCode, event) -> onCardKey(v, index, count, keyCode, event));
         return card;
     }
@@ -339,7 +444,7 @@ final class RecRow extends LinearLayout {
             artFrame.invalidate();
             title.setAlpha(focused ? 1f : 0.75f);
         });
-        card.setOnClickListener(v -> open(item.intentUri, pkg));
+        card.setOnClickListener(v -> open(item, pkg));
         card.setOnKeyListener((v, keyCode, event) -> onCardKey(v, index, count, keyCode, event));
         return card;
     }
@@ -371,7 +476,9 @@ final class RecRow extends LinearLayout {
         return false;
     }
 
-    private void open(String intentUri, String pkg) {
+    private void open(Recommendations.Card item, String pkg) {
+        People.claim(activity, pkg, item);
+        String intentUri = item.intentUri;
         if (intentUri != null && !intentUri.isEmpty()) {
             try {
                 Intent intent = Intent.parseUri(intentUri, Intent.URI_INTENT_SCHEME | Intent.URI_ANDROID_APP_SCHEME);

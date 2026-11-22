@@ -153,10 +153,12 @@ Then check the pieces that are easy to miss:
   Aerials are Apple's published 1080p films, streamed.
 - Do not vendor new paintings under 4096px on the long edge. The ones in
   `launcher/app/src/main/assets/art/` are the set.
-- Updates, if the person wants them, read GitHub releases of `lsands65/tv-home`. The tag is
-  the version code (`v9`) and the release includes the APK. A private repo needs a read token
-  in `update-token` next to the theme on the TV. That token is not the person's full `gh`
-  login, and it is not committed. Until they ask, skip this.
+- Updates, if the person wants them, read GitHub releases of `lsands65/tv-home` once when
+  the launcher starts. Coming back to Home does not ask again. The tag is the version code
+  (`v9`) and the release includes the APK. This repo is public, so no token is needed. A
+  private `update_repo` needs a read token in `update-token` next to the theme on the TV.
+  That token is not the person's full `gh` login, and it is not committed. Until they ask,
+  skip this.
 - The sports filter in `SportsGuide.java` prefers Wisconsin teams. Change that list only when
   the person names a different region.
 

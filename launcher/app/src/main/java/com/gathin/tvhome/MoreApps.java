@@ -167,6 +167,8 @@ final class MoreApps {
             int byLabel = collator.compare(a.label, b.label);
             return byLabel != 0 ? byLabel : a.component.getPackageName().compareTo(b.component.getPackageName());
         });
+        apps.add(0, new App(activity.getString(R.string.people),
+                new ComponentName(activity, PeopleActivity.class), peopleIcon(), false));
         apps.add(0, new App(activity.getString(R.string.screensaver),
                 new ComponentName(activity, ScreensaverActivity.class), photoIcon(), false));
         return apps;
@@ -197,10 +199,31 @@ final class MoreApps {
         return new BitmapDrawable(activity.getResources(), bitmap);
     }
 
+    /** A full-bleed head, masked by the same rounded tile as the other apps. */
+    private Drawable peopleIcon() {
+        int side = 256;
+        Bitmap bitmap = Bitmap.createBitmap(side, side, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(0xFF1A3148);
+        canvas.drawRect(0, 0, side, side, paint);
+        paint.setColor(0x22FFFFFF);
+        canvas.drawCircle(side * 0.5f, side * 0.18f, side * 0.55f, paint);
+        paint.setColor(0xFFF4F7FB);
+        float cx = side * 0.5f;
+        canvas.drawCircle(cx, side * 0.40f, side * 0.14f, paint);
+        canvas.drawCircle(cx, side * 0.78f, side * 0.22f, paint);
+        return new BitmapDrawable(activity.getResources(), bitmap);
+    }
+
     private void open(App app) {
         popup.dismiss();
         if (ScreensaverActivity.class.getName().equals(app.component.getClassName())) {
             activity.startActivity(new Intent(activity, ScreensaverActivity.class));
+            return;
+        }
+        if (PeopleActivity.class.getName().equals(app.component.getClassName())) {
+            activity.startActivity(new Intent(activity, PeopleActivity.class));
             return;
         }
         Intent intent = new Intent(Intent.ACTION_MAIN).setComponent(app.component);
