@@ -54,6 +54,7 @@ import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -93,6 +94,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * tvOS style home: black, a pinned dock row, an app grid, and one glass highlight that springs between tiles.
@@ -252,6 +255,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** hidden_apps as the adapter sees them (config.xml or a theme's config.json): a hidden app gets no card either. */
     private Set<String> hiddenApps = Collections.emptySet();
     private List<Cards.Card> cards = Collections.emptyList();
+    /** Asks PackageManager for the tiles off the main thread when tiles are already on screen (reloadTilesInBackground). */
+    private final ExecutorService tileLoader = Executors.newSingleThreadExecutor(r -> {
+        Thread thread = new Thread(r, "tiles");
+        thread.setDaemon(true);
+        return thread;
+    });
+    /** Moves on with every rebuild and every change to reorder mode: a background rebuild that started before is dropped. */
+    private int tileGeneration;
+    /** A background rebuild started and no rebuild has finished since: the tiles may not match the installed apps. */
+    private boolean tilesStale;
     /** The grid has been laid out and focused since the last resume; the card prompt waits for this. */
     private boolean tilesReady;
     private boolean settingsRecreationPending;
@@ -354,7 +367,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     && intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
             // In the background this only marks the tiles stale; onResume rebuilds them once.
             if (!tileRefresh.onPackagesChanged()) return;
-            reloadApps(false);
+            reloadApps(false, true, true, true);
             if (appLibrary != null) appLibrary.refresh();
         }
     };
@@ -383,6 +396,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        HttpCache.install(this);
         setContentView(R.layout.activity_main);
         density = getResources().getDisplayMetrics().density;
         // config.xml, overlaid by config.json from a pushed theme (see Config and tools/theme.sh).
@@ -1009,7 +1023,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         switch (tileRefresh.onResume(packagesChangedSinceRebuild())) {
             case REBUILD:
                 tilesReady = false;
-                reloadApps(true);
+                reloadApps(true, true, true, true);
                 break;
             case REFOCUS:
                 // The same tiles: only the focus goes back, as after a rebuild, without replaying the entrance.
@@ -1115,6 +1129,14 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      *                 on a return to the same tiles it would only mark a change that didn't happen.
      */
     private void reloadApps(boolean animate, boolean rebuild, boolean entrance) {
+        reloadApps(animate, rebuild, entrance, false);
+    }
+
+    /**
+     * @param background with tiles already on screen, ask PackageManager off the main thread: the old tiles stay
+     *                   until the new ones are ready (a package broadcast, or a return to Home after one).
+     */
+    private void reloadApps(boolean animate, boolean rebuild, boolean entrance, boolean background) {
         cancelPendingFocusScroll();
         RecyclerView.ViewHolder footer = grid.findViewHolderForAdapterPosition(adapter.appCount());
         final boolean restoreLibrary = adapter.isLibraryAt(adapter.appCount()) && footer != null
@@ -1124,7 +1146,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         final String returnKey = lastFocusedKey;
         final int returnSlot = lastFocused;
         final boolean restoreFocus = appLibrary == null && (animate || grid.hasFocus());
-        if (restoreFocus) {
+        Runnable before = () -> {
+            if (!restoreFocus) return;
             glassShown = false;
             glass.setAlpha(0f);
             heroShown = false;
@@ -1132,29 +1155,37 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             ambient.setAlpha(0f);
             heroArt.animate().cancel();
             heroArt.setAlpha(0f);
-        }
-        if (rebuild) reloadTiles();
-        if (animate && entrance && animations && !reducedMotion) {
-            grid.scheduleLayoutAnimation();
-            // A rebuild redraws the grid anyway; without one the entrance needs a draw to start.
-            if (!rebuild) grid.invalidate();
-        }
+        };
+        Runnable after = () -> {
+            if (animate && entrance && animations && !reducedMotion) {
+                grid.scheduleLayoutAnimation();
+                // A rebuild redraws the grid anyway; without one the entrance needs a draw to start.
+                if (!rebuild) grid.invalidate();
+            }
 
-        if (restoreFocus) {
-            // Keep a focused footer at the end even when the app count changes.
-            if (restoreLibrary) grid.post(this::focusLibrary);
-            else restoreFocus();
-        } else {
-            // A package change must not steal focus from a top button or the Inputs popup.
-            int pos = adapter.positionOf(returnKey);
-            lastFocused = Math.max(0, Math.min(pos >= 0 ? pos : returnSlot, adapter.appCount() - 1));
-            lastFocusedKey = adapter.keyAt(lastFocused);
-            if (pos < 0) hideHero();
-            // A newly installed app may have brought a card with it.
-            tilesReady = true;
-            startPendingSettingsReorder();
-            showCardPrompt();
+            if (restoreFocus) {
+                // Keep a focused footer at the end even when the app count changes.
+                if (restoreLibrary) grid.post(this::focusLibrary);
+                else restoreFocus();
+            } else {
+                // A package change must not steal focus from a top button or the Inputs popup.
+                int pos = adapter.positionOf(returnKey);
+                lastFocused = Math.max(0, Math.min(pos >= 0 ? pos : returnSlot, adapter.appCount() - 1));
+                lastFocusedKey = adapter.keyAt(lastFocused);
+                if (pos < 0) hideHero();
+                // A newly installed app may have brought a card with it.
+                tilesReady = true;
+                startPendingSettingsReorder();
+                showCardPrompt();
+            }
+        };
+        if (rebuild && background) {
+            reloadTilesInBackground(before, after);
+            return;
         }
+        before.run();
+        if (rebuild) reloadTiles();
+        after.run();
     }
 
     /** True when PackageManager reports apps changed since the last rebuild (one binder call). */
@@ -1175,22 +1206,103 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      */
     private void reloadTiles() {
         if (reordering) endReorder();   // an app installed or removed while reordering: keep the order so far
-        // Read these before reload(): rebinding can move focus to the first tile and overwrite them.
-        final String returnKey = lastFocusedKey;
-        final int returnSlot = lastFocused;
+        tileGeneration++;
+        showTiles(buildTiles(moduleCards, hiddenApps, packageSequence));
+    }
+
+    /**
+     * reloadTiles with the PackageManager work on the tiles thread. The first build and a rebuild while reordering
+     * stay on the main thread as before: there are no old tiles to keep showing, or a tile is being carried.
+     */
+    private void reloadTilesInBackground(Runnable before, Runnable after) {
+        if (reordering || adapter.appCount() == 0) {
+            before.run();
+            reloadTiles();
+            after.run();
+            return;
+        }
+        final int generation = ++tileGeneration;
+        tilesStale = true;
+        final boolean withCards = moduleCards;
+        final Set<String> hidden = hiddenApps;
+        final int since = packageSequence;
+        tileLoader.execute(() -> {
+            TileBuild build;
+            try {
+                build = buildTiles(withCards, hidden, since);
+            } catch (RuntimeException e) {
+                Log.w("TvHome", "tile rebuild failed off the main thread: " + e);
+                build = null;
+            }
+            final TileBuild built = build;
+            handler.post(() -> {
+                if (isDestroyed()) return;
+                if (generation != tileGeneration || built == null) {
+                    if (!tilesStale) {
+                        // A rebuild on the main thread already showed the installed apps.
+                        tilesReady = true;
+                    } else if (reordering) {
+                        // endReorder rebuilds once the carried tile is put down.
+                        tilesReady = true;
+                    } else if (built == null) {
+                        before.run();
+                        reloadTiles();
+                        after.run();
+                    } else {
+                        // Reorder mode came and went: the order this was built with is gone.
+                        reloadTilesInBackground(before, after);
+                    }
+                    return;
+                }
+                before.run();
+                showTiles(built);
+                after.run();
+            });
+        });
+    }
+
+    /** What buildTiles found, ready for showTiles. */
+    private static final class TileBuild {
+        final List<Cards.Card> cards;
+        final AppAdapter.Prepared tiles;
+        final int packageSequence;
+
+        TileBuild(List<Cards.Card> cards, AppAdapter.Prepared tiles, int packageSequence) {
+            this.cards = cards;
+            this.tiles = tiles;
+            this.packageSequence = packageSequence;
+        }
+    }
+
+    /** Asks PackageManager for the tiles and the module cards. Touches nothing on screen, so any thread may call it. */
+    private TileBuild buildTiles(boolean withCards, Set<String> hidden, int since) {
         final List<Cards.Card> none = Collections.emptyList();
-        // An updated app may bring new artwork; the backdrop is cheap to make again.
-        heroArtCache.clear();
-        heroArtKey = null;
+        // Read first: an app that changes while the tiles are built shows up as changed at the next resume.
+        int sequence = currentPackageSequence(since);
         // One LEANBACK query for both the tiles and the card checks.
         final List<ResolveInfo> leanback = getPackageManager().queryIntentActivities(
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
-        cards = moduleCards ? CardFeature.run(() -> Cards.discover(this, hiddenApps,
+        final List<Cards.Card> found = withCards ? CardFeature.run(() -> Cards.discover(this, hidden,
                 () -> Cards.load(Cards.storeFile(this)), leanback), none) : none;
-        adapter.reload(cards.isEmpty() ? none : CardFeature.run(() -> Cards.shown(cards), none), leanback);
+        AppAdapter.Prepared tiles = adapter.prepare(
+                found.isEmpty() ? none : CardFeature.run(() -> Cards.shown(found), none), leanback);
+        return new TileBuild(found, tiles, sequence);
+    }
+
+    /** Puts built tiles on screen. Main thread only. */
+    private void showTiles(TileBuild build) {
+        // Read these before apply(): rebinding can move focus to the first tile and overwrite them.
+        final String returnKey = lastFocusedKey;
+        final int returnSlot = lastFocused;
+        // An updated app may bring new artwork; the backdrop is cheap to make again.
+        heroArtCache.clear();
+        heroArtKey = null;
+        cards = build.cards;
+        adapter.apply(build.tiles);
         lastFocusedKey = returnKey;
         lastFocused = returnSlot;
-        packageSequence = currentPackageSequence(packageSequence);
+        packageSequence = build.packageSequence;
+        tilesStale = false;
     }
 
     /**
@@ -1287,6 +1399,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // RUNNING_LOW and CRITICAL also arrive while Home is visible when an accessibility service keeps the
         // process in the foreground; never blank the screen the owner is looking at.
         if (!MemoryTrimPolicy.shouldRelease(level, started)) return;
+        tileGeneration++;
+        tilesStale = false;   // tileRefresh rebuilds on the way back; a background rebuild must not refill the tiles
         adapter.clear();
         // Detach the adapter too: with Home stopped no layout pass runs, so the tile views (and the bitmaps
         // they hold) would stay attached until Home comes back. setAdapter(null) recycles them now.
@@ -1311,6 +1425,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        tileLoader.shutdownNow();
         unregisterReceiver(packageReceiver);
         wallpaperPlayer.close();
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
@@ -1466,6 +1581,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         dockedAtStart = adapter.dockFilled();
         for (int i = 0; i < Math.min(dockedAtStart, adapter.movableCount()); i++) dockInSession.add(adapter.keyAt(i));
         adapter.setReordering(true);
+        tileGeneration++;
         if (adapter.hasEmptySlots()) reloadTiles();   // every position must hold a tile that can move
         reordering = true;
         orderAtStart = adapter.movableKeys();
@@ -1613,6 +1729,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         drop();
         reordering = false;
         adapter.setReordering(false);
+        tileGeneration++;
         glass.setAccent(festive ? festival.accentColor() : 0);
         btnReorder.setActivated(false);
         List<String> keys = adapter.movableKeys();
@@ -1634,7 +1751,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 Toast.makeText(this, R.string.reorder_not_saved, Toast.LENGTH_SHORT).show();
             }
         }
-        if (fillDockLeavesSlots) reloadTiles();   // the empty dock slots left out while reordering come back
+        // The empty dock slots left out while reordering come back, and apps that changed meanwhile show up.
+        if (fillDockLeavesSlots || tilesStale) reloadTiles();
     }
 
     /**

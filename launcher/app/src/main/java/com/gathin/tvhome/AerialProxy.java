@@ -75,6 +75,7 @@ final class AerialProxy {
             conn.setConnectTimeout(15000);
             conn.setReadTimeout(30000);
             conn.setInstanceFollowRedirects(true);
+            conn.setUseCaches(false);
             conn.setRequestProperty("User-Agent", "TvHome");
             conn.setRequestProperty("Accept-Encoding", "identity");
             if (range != null) conn.setRequestProperty("Range", range);

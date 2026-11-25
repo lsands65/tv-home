@@ -174,11 +174,11 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private final int rowsBelowDock;
     private final boolean dockTitle;
     /** The owner's saved order (reorder button, Order): key -> rank. Empty when there is none or it no longer applies. */
-    private Map<String, Integer> savedRanks = Collections.emptyMap();
+    private volatile Map<String, Integer> savedRanks = Collections.emptyMap();
     /** Dock size recorded with the saved order (Order.docked), or -1: then dock_apps says which tiles are docked. */
-    private int savedDocked = -1;
+    private volatile int savedDocked = -1;
     /** Reorder mode: no empty dock slots, so every position holds a tile that can move. */
-    private boolean reordering;
+    private volatile boolean reordering;
     private final TileListener listener;
     private final int dockSize;
     /** config dock_row: false makes the dock apps the first tiles of one plain grid (names shown, no empty slots). */
@@ -259,13 +259,44 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
      * so focus follows it); hidden_apps wins over a card, and a card's package in dock_apps takes that slot.
      */
     void reload(List<Cards.Card> cards, List<ResolveInfo> leanback) {
+        apply(prepare(cards, leanback));
+    }
+
+    /** Tiles built by {@link #prepare}, not yet on screen. */
+    static final class Prepared {
+        final List<Entry> entries;
+        final Set<String> leanbackPackages;
+        final int docked, emptySlots;
+
+        Prepared(List<Entry> entries, Set<String> leanbackPackages, int docked, int emptySlots) {
+            this.entries = entries;
+            this.leanbackPackages = leanbackPackages;
+            this.docked = docked;
+            this.emptySlots = emptySlots;
+        }
+    }
+
+    /** Shows tiles from {@link #prepare}. Main thread only. */
+    void apply(Prepared tiles) {
+        leanbackPackages = tiles.leanbackPackages;
+        docked = tiles.docked;
+        emptySlots = tiles.emptySlots;
+        items.clear();
+        items.addAll(tiles.entries);
+        notifyDataSetChanged();
+    }
+
+    /**
+     * Builds the tiles without touching what is on screen, so it may run off the main thread. It reads the config,
+     * the saved order and reorder mode as they are now; the caller drops the result if those change before apply().
+     */
+    Prepared prepare(List<Cards.Card> cards, List<ResolveInfo> leanback) {
         PackageManager pm = ctx.getPackageManager();
         // The LEANBACK query is shared with the module-card check (MainActivity); copy it before adding
         // library apps so the caller's list stays as it was.
         List<ResolveInfo> found = new ArrayList<>(leanback);
         Set<String> tvPackages = new HashSet<>();
         for (ResolveInfo ri : found) if (ri.activityInfo != null) tvPackages.add(ri.activityInfo.packageName);
-        leanbackPackages = tvPackages;
         // Copy before merging: LibraryApps.load() may return an immutable empty set (#419).
         Set<String> added = new HashSet<>(LibraryApps.load(ctx));
         added.addAll(libraryPreload);
@@ -335,7 +366,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                     new ComponentName(ctx, HomeSettingsActivity.class), null,
                     ctx.getDrawable(R.drawable.ic_home_settings), null, 0));
         }
-        docked = 0;
+        int docked = 0;
         while (docked < fresh.size() && isDocked(fresh.get(docked))) docked++;
         if (scenic) {
             // The home row is only the dock. Everything else lives in the folder at the end of it.
@@ -351,14 +382,12 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
                     new FolderIcon(marks), null, 0xFF2C2E33));
             docked++;
         }
-        emptySlots = dockRow && !reordering ? DockSlots.empty(docked, dockSize, fresh.size(), fillDock) : 0;
+        int emptySlots = dockRow && !reordering ? DockSlots.empty(docked, dockSize, fresh.size(), fillDock) : 0;
         for (int i = 0; i < emptySlots; i++) {
             fresh.add(docked + i, new Entry(Entry.EMPTY, "", new ComponentName(ctx, "empty-dock-slot-" + i),
                     null, null, null, 0));
         }
-        items.clear();
-        items.addAll(fresh);
-        notifyDataSetChanged();
+        return new Prepared(fresh, tvPackages, docked, emptySlots);
     }
 
     /** A banner_* drawable bundled with the launcher, or null for none or a name that is not one. */

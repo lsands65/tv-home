@@ -148,6 +148,7 @@ public class AerialDream extends DreamService {
     @Override
     public void onDreamingStarted() {
         super.onDreamingStarted();
+        HttpCache.install(this);
         stopped = false;
         try {
             proxy = new AerialProxy();

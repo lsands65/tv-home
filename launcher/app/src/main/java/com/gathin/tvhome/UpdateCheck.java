@@ -303,7 +303,9 @@ final class UpdateCheck {
     private static HttpURLConnection open(String url, String token, String accept) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setConnectTimeout(15000);
-        conn.setReadTimeout(accept.startsWith("application/octet") ? 120000 : 20000);
+        boolean apk = accept.startsWith("application/octet");
+        conn.setReadTimeout(apk ? 120000 : 20000);
+        conn.setUseCaches(!apk);
         conn.setInstanceFollowRedirects(true);
         conn.setRequestProperty("User-Agent", "TvHome");
         conn.setRequestProperty("Accept", accept);

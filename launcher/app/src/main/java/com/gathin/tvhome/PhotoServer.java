@@ -2,6 +2,7 @@ package com.gathin.tvhome;
 
 import android.util.Log;
 
+import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -17,6 +18,11 @@ import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.Enumeration;
 import java.util.Locale;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A page on the TV's own address, open only while Screensaver is on screen.
@@ -26,6 +32,9 @@ import java.util.Locale;
 final class PhotoServer {
     private static final String TAG = "TvHome";
     private static final int MAX_PHOTO = 25 * 1024 * 1024;
+    /** What the phone may fill the folder up to, and what the TV keeps free for itself. */
+    private static final long MAX_FOLDER = 512L * 1024 * 1024;
+    private static final long KEEP_FREE = 256L * 1024 * 1024;
 
     interface Ready {
         void up(String url);
@@ -35,9 +44,10 @@ final class PhotoServer {
     private final File folder;
     private final String token;
     private final Ready ready;
-    private ServerSocket socket;
+    private final AtomicInteger saved = new AtomicInteger();
+    private volatile ServerSocket socket;
     private Thread thread;
-    private int saved;
+    private volatile ThreadPoolExecutor clients;
 
     PhotoServer(File folder, Ready ready) {
         this.folder = folder;
@@ -63,6 +73,8 @@ final class PhotoServer {
             } catch (Exception ignored) {
             }
         }
+        ThreadPoolExecutor pool = clients;
+        if (pool != null) pool.shutdownNow();
     }
 
     private void run() {
@@ -88,24 +100,57 @@ final class PhotoServer {
             return;
         }
         socket = server;
+        // A few connections at once, so one that sends nothing cannot hold the page for everyone else.
+        // Past the small queue a connection is closed rather than kept waiting.
+        clients = new ThreadPoolExecutor(3, 3, 0, TimeUnit.MILLISECONDS, new ArrayBlockingQueue<>(6), r -> {
+            Thread worker = new Thread(r, "photo-client");
+            worker.setDaemon(true);
+            return worker;
+        });
         ready.up("http://" + ip + ":" + port + "/p/" + token);
         try {
             while (!server.isClosed()) {
-                try (Socket client = server.accept()) {
-                    client.setSoTimeout(20000);
-                    handle(client);
+                Socket client;
+                try {
+                    client = server.accept();
                 } catch (Exception e) {
                     if (server.isClosed()) break;
                     Log.w(TAG, "photo page " + e.getMessage());
+                    continue;
+                }
+                try {
+                    clients.execute(() -> serve(client));
+                } catch (RejectedExecutionException e) {
+                    close(client);
                 }
             }
         } catch (Exception e) {
             Log.w(TAG, "photo server " + e.getMessage());
+        } finally {
+            clients.shutdownNow();
+        }
+    }
+
+    private void serve(Socket client) {
+        try {
+            client.setSoTimeout(20000);
+            handle(client);
+        } catch (Exception e) {
+            Log.w(TAG, "photo page " + e.getMessage());
+        } finally {
+            close(client);
+        }
+    }
+
+    private static void close(Socket client) {
+        try {
+            client.close();
+        } catch (Exception ignored) {
         }
     }
 
     private void handle(Socket client) throws Exception {
-        InputStream in = client.getInputStream();
+        InputStream in = new BufferedInputStream(client.getInputStream(), 16384);
         ByteArrayOutputStream head = new ByteArrayOutputStream();
         int matched = 0;
         while (head.size() < 16384 && matched < 4) {
@@ -136,30 +181,58 @@ final class PhotoServer {
             respond(client, 413, "text/plain", "That photo is too large");
             return;
         }
-        byte[] body = new byte[length];
-        int off = 0;
-        while (off < length) {
-            int n = in.read(body, off, length - off);
-            if (n < 0) break;
-            off += n;
+        if (!roomFor(length)) {
+            respond(client, 507, "text/plain", "The TV has no room for more photos");
+            return;
         }
-        String ext = kind(body, off);
-        if (ext == null || off != length) {
+        byte[] magic = new byte[12];
+        int got = readFully(in, magic, magic.length);
+        String ext = kind(magic, got);
+        if (ext == null) {
             respond(client, 415, "text/plain", "Use a jpeg, png, or webp");
             return;
         }
-        File dest = new File(folder, "phone-" + System.currentTimeMillis() + "-" + saved + ext);
+        File dest = new File(folder, "phone-" + System.currentTimeMillis() + "-" + saved.getAndIncrement() + ext);
         File part = new File(dest.getPath() + ".part");
+        long written = got;
         try (FileOutputStream out = new FileOutputStream(part)) {
-            out.write(body, 0, length);
-        }
-        if (!part.renameTo(dest)) {
+            out.write(magic, 0, got);
+            byte[] buf = new byte[16384];
+            while (written < length) {
+                int n = in.read(buf, 0, (int) Math.min(buf.length, length - written));
+                if (n < 0) break;
+                out.write(buf, 0, n);
+                written += n;
+            }
+        } catch (Exception e) {
             part.delete();
-            respond(client, 500, "text/plain", "Could not save");
+            throw e;
+        }
+        if (written != length || !part.renameTo(dest)) {
+            part.delete();
+            respond(client, written != length ? 400 : 500, "text/plain", "Could not save");
             return;
         }
-        saved++;
         respond(client, 200, "text/plain", "ok");
+    }
+
+    /** Whether one more photo of this size keeps the folder under its cap and the TV's storage free. */
+    private boolean roomFor(long length) {
+        if (folder.getUsableSpace() - length < KEEP_FREE) return false;
+        long used = 0;
+        File[] files = folder.listFiles();
+        if (files != null) for (File file : files) used += file.length();
+        return used + length <= MAX_FOLDER;
+    }
+
+    private static int readFully(InputStream in, byte[] into, int want) throws Exception {
+        int off = 0;
+        while (off < want) {
+            int n = in.read(into, off, want - off);
+            if (n < 0) break;
+            off += n;
+        }
+        return off;
     }
 
     private static int contentLength(String header) {

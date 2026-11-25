@@ -118,6 +118,7 @@ final class AerialCatalog {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setConnectTimeout(15000);
         conn.setReadTimeout(60000);
+        conn.setUseCaches(false);
         conn.setRequestProperty("User-Agent", "TvHome");
         try {
             if (conn.getResponseCode() != HttpURLConnection.HTTP_OK) {
