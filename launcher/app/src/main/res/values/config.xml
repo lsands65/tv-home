@@ -205,8 +205,8 @@
 
     <!-- A name after the greeting: "Mr. Trịnh" shows GOOD MORNING, MR. TRỊNH. Empty: the greeting alone. -->
     <string name="greeting_name" translatable="false"></string>
-    <!-- The greeting above the clock ("Good evening"). false hides it. Can also be set with "show_greeting" in a theme. -->
-    <bool name="show_greeting">true</bool>
+    <!-- The greeting above the clock ("Good evening"). false hides it, which is this home. Can also be set with "show_greeting" in a theme. -->
+    <bool name="show_greeting">false</bool>
     <!-- The date and the line between the clock and the date in the clock's full white instead of dimmed. Can also be
          set with "header_white" in a theme. -->
     <bool name="header_white">false</bool>
@@ -236,9 +236,9 @@
          the dock apps only. Can also be set with "dock_band_all" in a theme. -->
     <bool name="dock_band_all">false</bool>
     <!-- The dock band's padding equals the gap between its tiles on all four sides (as far as the grid's edges leave room),
-         so its corners are concentric with the tiles' and the spacing reads even. false (the default) keeps the fixed
-         14dp above and below, up to 22dp at the sides and 26dp corners. Can also be set with "dock_even_padding": true in a theme's config.json. -->
-    <bool name="dock_even_padding">false</bool>
+         so its corners are concentric with the tiles' and the spacing reads even. false keeps the fixed
+         14dp above and below, up to 22dp at the sides and 26dp corners. Can also be set with "dock_even_padding" in a theme's config.json. -->
+    <bool name="dock_even_padding">true</bool>
     <!-- A reorder button (two arrows) in the top bar. Off by default: reordering is also in the Settings
          button's long-press menu, so it needs no extra button on screen. -->
     <bool name="reorder_button">false</bool>
@@ -246,7 +246,7 @@
          Inputs keeps its label. -->
     <bool name="icon_only_buttons">false</bool>
     <!-- The Inputs pill as a round icon button too (the label moves to the talkback description). -->
-    <bool name="icon_only_inputs">false</bool>
+    <bool name="icon_only_inputs">true</bool>
     <!-- true colours the Wi-Fi pill's icon green while the TV is online and leaves it white while it is not (dark on
          the focused pill either way), so the connection shows at a glance, also as an icon-only button. Can also be
          set with "wifi_status_color": true in a theme's config.json. -->
@@ -261,16 +261,16 @@
          0 leaves the Wi-Fi pill as an icon. -->
     <integer name="wifi_label_width">0</integer>
 
-    <!-- The Wi-Fi/Ethernet pill in the top bar. false hides it (on Android 14 with Location off it can
+    <!-- The Wi-Fi/Ethernet pill in the top bar. false hides it, which is this home (on Android 14 with Location off it can
          only say "Wi-Fi", not the network name). Can also be set with "show_network_pill" in a theme. -->
-    <bool name="show_network_pill">true</bool>
+    <bool name="show_network_pill">false</bool>
     <!-- Apps shown as round buttons with their own logo in the top bar, left of the network pill, in this order.
          They leave the grid. Missing apps are skipped. Can also be set with "top_bar_apps" in a theme. -->
     <string-array name="top_bar_apps" translatable="false">
     </string-array>
-    <!-- The Inputs pill in the top bar, shown when the TV has inputs to list. false hides it for good; what the
+    <!-- The Inputs pill in the top bar, shown when the TV has inputs to list. false hides it, which is this home; what the
          remote's Input button does is unchanged. Can also be set with "show_inputs_pill" in a theme. -->
-    <bool name="show_inputs_pill">true</bool>
+    <bool name="show_inputs_pill">false</bool>
     <!-- Names under every tile, not only the focused one: unfocused names stay dimmed, the focused one is full white.
          With dock_row the band grows down to hold the dock's names too. -->
     <bool name="always_show_names">false</bool>
@@ -297,13 +297,13 @@
          the dock, its title and this many rows would not otherwise fit the screen height. -->
     <integer name="rows_below_dock">0</integer>
 
-    <!-- The focused dock app's name in large type above the dock. false keeps only the glow, which leaves room
-         for bigger tiles when rows_below_dock is 2 or 3. -->
-    <bool name="dock_title">true</bool>
+    <!-- The focused dock app's name in large type above the dock. false keeps the dock as icons, which is this home. -->
+    <bool name="dock_title">false</bool>
 
     <!-- Tiles per row in the grid; the dock always has this many slots. Tiles are 180dp wide at 4 columns and
-         shrink to fit from 5 up (about 144dp at 5, 117dp at 6 on a 1080p TV). -->
-    <integer name="columns">4</integer>
+         shrink to fit from 5 up (about 144dp at 5, 117dp at 6 on a 1080p TV). Six leaves room for a short
+         dock plus the More apps tile. -->
+    <integer name="columns">6</integer>
 
     <!-- Basic motion is on; advanced effects are opt-in in the launcher's own Settings screen. -->
     <bool name="animations">true</bool>
@@ -316,8 +316,8 @@
     <!-- Installed launchable apps, including ordinary Android apps. Also settable in config.json. -->
     <bool name="app_library">false</bool>
     <!-- Every app tile is its icon on a card tinted from that icon, name only under the focused tile,
-         instead of each app's own banner. Off by default; a theme can set "uniform_tiles": true. -->
-    <bool name="uniform_tiles">false</bool>
+         instead of each app's own banner. On for this home; a theme can set "uniform_tiles": false. -->
+    <bool name="uniform_tiles">true</bool>
     <!-- Optional direct Home picker in the app library: OK toggles the checkmark, checked apps first.
          Off by default; a theme can set "app_library_selection": true (also needs app_library). -->
     <bool name="app_library_selection">false</bool>
@@ -343,9 +343,9 @@
 
     <!-- The glass highlight springs past the tile it moves to and the focused tile zooms past its size
          before settling. false: both go straight there, with no bounce, while scrolling stays smooth
-         (reduced_motion also removes the overshoot, but scrolls in one jump). Can also be set with
-         "focus_overshoot" in a theme's config.json. -->
-    <bool name="focus_overshoot">true</bool>
+         (reduced_motion also removes the overshoot, but scrolls in one jump). This home settles with no bounce.
+         Can also be set with "focus_overshoot" in a theme's config.json. -->
+    <bool name="focus_overshoot">false</bool>
 
     <!-- One line under the clock: CPU, free memory and free storage. Off by default; a theme can set
          "show_stats": true. Nothing is read, and the clock does not move, while this is false. -->
@@ -382,9 +382,8 @@
     <integer name="cinematic_art">50</integer>
 
     <!-- The glow behind the dock in the focused app's colour (red for YouTube, blue for Prime Video). false keeps
-         only background_color or the wallpaper behind everything. Can also be set with "ambient_glow": false in a
-         theme's config.json. -->
-    <bool name="ambient_glow">true</bool>
+         the landscape clear, which is this home. Can also be set with "ambient_glow" in a theme's config.json. -->
+    <bool name="ambient_glow">false</bool>
     <!-- The focus highlight glows in the focused app's colour on every tile, as the cinematic shelf does for the
          dock, without cinematic_home. Can also be set with "app_glow": true in a theme's config.json. -->
     <bool name="app_glow">false</bool>

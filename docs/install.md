@@ -65,9 +65,9 @@ needs:
 
 Leave the scenic keys as they are: `scenic` true, `rows_below_dock` 0, `dock_title` false,
 `show_greeting` false, both glow keys false, both pill keys false, `uniform_tiles` true,
-`focus_overshoot` false, `wallpaper` false, `idle_show` `"art"`, `idle_seconds` 60. That is
-the look. `columns` must be at least the number of dock apps. Scenic adds the More apps tile
-itself.
+`focus_overshoot` false, `wallpaper` false, `idle_show` `"art"`, `idle_seconds` 60. The APK
+already uses that look when no theme file is on the TV. `columns` must be at least the number
+of dock apps. Scenic adds the More apps tile itself.
 
 ## 3. Build and install
 
@@ -107,7 +107,9 @@ adb -s <tv-ip>:5555 shell settings put secure screensaver_enabled 0
 adb -s <tv-ip>:5555 shell dumpsys activity activities | findstr mResumedActivity
 ```
 
-The resumed activity should be `com.gathin.tvhome/.MainActivity`. Only then, and only if the
+The resumed activity should be `com.gathin.tvhome/.MainActivity`. The screen should already be
+the living-room home: a landscape, a glass clock, no greeting, and no corner pills. If it is
+the plain dock with a greeting, this TV is not running this build. Only then, and only if the
 person wants the stock Google TV launcher out of the way, disable
 `com.google.android.apps.tv.launcherx` with `pm disable-user --user 0`. Do not uninstall it.
 Do not leave the set with no enabled Home. If this launcher is not focused, stop and say so.

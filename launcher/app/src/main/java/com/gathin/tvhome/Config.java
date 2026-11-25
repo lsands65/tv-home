@@ -374,16 +374,19 @@ final class Config {
         return json == null ? "" : string(json, "sports_epg", "");
     }
 
-    /** Theme key scenic: the scene, glass clock, and idle fade live in this launcher. */
+    /**
+     * The scene, glass clock, and idle fade. This build is that home. A theme turns it off
+     * only by setting scenic to false.
+     */
     static boolean scenic(Context ctx) {
         JSONObject json = theme(ctx);
-        return json != null && json.optBoolean("scenic", false);
+        return json == null || !json.has("scenic") || json.optBoolean("scenic", true);
     }
 
-    /** Theme key idle_show: art, aerial, or off. */
+    /** Theme key idle_show: art, aerial, or off. Art when the theme does not say. */
     static String idleShow(Context ctx) {
         JSONObject json = theme(ctx);
-        String show = json == null ? "off" : json.optString("idle_show", "off");
+        String show = json == null || !json.has("idle_show") ? "art" : json.optString("idle_show", "art");
         return "art".equals(show) || "aerial".equals(show) ? show : "off";
     }
 
@@ -706,7 +709,8 @@ final class Config {
         if (!wallpaperEnabled) wallpaper = null;
         int rotationMinutes = json == null ? 0 : integer(json, "wallpaper_rotation_minutes", 0, 0, 1440);
         int wallpaperDim = json == null ? 0 : integer(json, "wallpaper_dim", 0, 0, 90);
-        int dockOpacity = json == null ? 100 : integer(json, "dock_opacity", 100, 30, 100);
+        int dockOpacity = json == null || !json.has("dock_opacity")
+                ? 62 : integer(json, "dock_opacity", 62, 30, 100);
         dockOpacity = chosenDockOpacity(choices.getInt(DOCK_OPACITY_KEY, -1), dockOpacity);
         String wallpaperOrder = json == null ? WallpaperRotation.ORDER_SHUFFLE
                 : string(json, "wallpaper_order", WallpaperRotation.ORDER_SHUFFLE);

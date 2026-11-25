@@ -2,8 +2,8 @@
 
 The living-room home is the CleanYourTV launcher (`com.gathin.tvhome`) with the Couch TV night
 composition drawn in the app itself. It is not the Couch TV website, and it is not a WebView.
-`scenic: true` in a theme turns it on. The dock, Keep watching, and the sports row stay the
-launcher's own views.
+This build draws it with no theme file. A theme turns it off only by setting `scenic` to false.
+The dock, Keep watching, and the sports row stay the launcher's own views.
 
 It was built for a Hisense 75U75N (`hengshan`, Google TV 12). The look itself is the theme plus
 this launcher build. The Hisense rules at the end are specific to that set.
@@ -51,8 +51,10 @@ adb -s <tv-ip>:5555 shell am force-stop com.gathin.tvhome
 adb -s <tv-ip>:5555 shell am start -a android.intent.action.MAIN -c android.intent.category.HOME -n com.gathin.tvhome/.MainActivity
 ```
 
-`pm install -r` keeps the theme file already on the TV. Push the theme after install, or any
-time the JSON changes. Pushing restarts Home, which is what refreshes the cached theme:
+`pm install -r` keeps a theme file already on the TV. The APK is already this home, so a set
+with no theme file still gets the landscape, the glass clock, and the icon dock. Push a theme
+when that house needs its own dock list or a sports address, or any time the JSON changes.
+Pushing restarts Home, which is what refreshes the cached theme:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\theme.ps1 -TvHost <tv-ip> themes\living-room

@@ -55,9 +55,11 @@ adb -s <tv-ip>:5555 shell am start -a android.intent.action.MAIN -c android.inte
 powershell -ExecutionPolicy Bypass -File ..\tools\theme.ps1 -TvHost <tv-ip> ..\themes\living-room
 ```
 
-`themes/living-room/config.json` is the theme: which apps are on the dock, the idle paintings,
-and an optional XMLTV address for the sports row. Change `dock_apps` and `sports_epg` for
-another house before pushing it. The guide address is not part of this repo.
+The installed APK is already this home: the landscape, the glass clock, the short icon dock,
+and the paintings. No theme file is required for that. `themes/living-room/config.json` only
+changes a house: which apps are on the dock, and an optional XMLTV address for the sports row.
+Change `dock_apps` and `sports_epg` for another house before pushing it. The guide address is
+not part of this repo. Skipping that push leaves the dock as the apps built into the APK.
 
 ## Updates
 
